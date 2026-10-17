@@ -3,8 +3,7 @@ rem Packages GladiusPort Builder into a single windowed exe (builder\dist\Gladiu
 rem Needs: pip install pyinstaller. Build gladiusport.dll first: src\build.bat release
 rem (default: ships the RELEASE dll, developer overrides off). "build_exe.bat dev" ships ..\build\gladiusport.dll.
 rem Online versus: ..\netplay\gladiusnet.dll (prebuilt release, committed); "dev" prefers ..\build\gladiusnet.dll.
-rem The converter scripts read ..\inventory relative to themselves, so tools\ and inventory\ ship as plain
-rem data files and are imported from the bundle at runtime.
+rem The converter scripts ship as plain files in tools\ and are imported from the bundle at runtime.
 setlocal
 cd /d "%~dp0"
 set DLL=..\build\release\gladiusport.dll
@@ -12,9 +11,8 @@ if /i "%~1"=="dev" set DLL=..\build\gladiusport.dll
 if not exist %DLL% (echo missing %DLL% - build it first: src\build.bat release & exit /b 1)
 if /i not "%~1"=="dev" findstr /c:"GPBUILD=release" %DLL% >nul || (echo %DLL% is not a release build & exit /b 1)
 if exist payload rmdir /s /q payload
-mkdir payload\tools payload\inventory
-for %%f in (xbe.py xbe2pe.py xbeicon.py xiso.py replacements.py d3d_table.py) do copy /y ..\tools\%%f payload\tools\ >nul || exit /b 1
-for %%f in (kernel_import_names.txt boundary.txt xbsymbols_raw.txt) do copy /y ..\inventory\%%f payload\inventory\ >nul || exit /b 1
+mkdir payload\tools
+for %%f in (xbe.py xbe2pe.py xbeicon.py xiso.py replacements.py d3d_table.py kernel_names.py) do copy /y ..\tools\%%f payload\tools\ >nul || exit /b 1
 copy /y %DLL% payload\ >nul || exit /b 1
 set NETDLL=..\netplay\gladiusnet.dll
 if /i "%~1"=="dev" if exist ..\build\gladiusnet.dll set NETDLL=..\build\gladiusnet.dll

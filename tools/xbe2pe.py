@@ -74,11 +74,10 @@ def resource_section(icons, rva):
     return bytes(out + blobs)
 
 
-def build(xbe_path, out_path, gui=False, names_path=None):
-    """gui=True: Windows subsystem (no console window). names_path: kernel_import_names.txt location."""
+def build(xbe_path, out_path, gui=False):
+    """gui=True: Windows subsystem (no console window)."""
+    from kernel_names import KERNEL_IMPORTS as names
     x = Xbe(xbe_path)
-    names_path = names_path or os.path.join(os.path.dirname(__file__), '..', 'inventory', 'kernel_import_names.txt')
-    names = open(names_path).read().split()
     thunks = x.kernel_thunks()
     assert len(thunks) == len(names) == 162
 

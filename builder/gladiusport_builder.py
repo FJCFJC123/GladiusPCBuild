@@ -38,7 +38,7 @@ def bundle_dir():
     here = Path(__file__).resolve().parent
     if (here / "payload" / "gladiusport.dll").exists():
         return here / "payload"
-    return here.parent                                   # dev: GladiusPort\ (tools, inventory, build)
+    return here.parent                                   # dev: GladiusPort\ (tools, build)
 
 
 def payload_file(name):
@@ -53,7 +53,7 @@ def payload_file(name):
 
 
 def load_tools():
-    """Import xbe2pe / xiso from the shipped tools folder (they read ../inventory relative to themselves)."""
+    """Import xbe2pe / xiso from the shipped tools folder."""
     tools = str(bundle_dir() / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
@@ -147,9 +147,8 @@ class Builder:
 
     def convert(self, xbe2pe):
         self.log("Converting default.xbe -> gladius.exe")
-        names = bundle_dir() / "inventory" / "kernel_import_names.txt"
         exe = self.out / "gladius.exe"
-        xbe2pe.build(str(self.out / "default.xbe"), str(exe), gui=not self.opt.get("console"), names_path=str(names))
+        xbe2pe.build(str(self.out / "default.xbe"), str(exe), gui=not self.opt.get("console"))
         # the level editor is the same exe under its own name (gladiusport.dll switches to editor mode by name);
         # optional - without the option an editor from an earlier install is removed
         editor = self.out / "gladius_editor.exe"

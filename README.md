@@ -258,7 +258,6 @@ Both live next to `gladius.exe`. Most graphics settings can also be changed in g
 
 - Visual Studio 2022 with the C++ desktop workload (x86 toolset).
 - Python 3 (for the converter tools) and `pip install pyinstaller` (for the builder exe).
-- Clone with submodules: `git clone --recursive <repo>` (or `git submodule update --init`).
 
 **Steps**
 
@@ -288,9 +287,8 @@ switched off at startup and the rest of the game is unaffected.
 | `src/` | `gladiusport.dll`: XAPI, Direct3D 11 renderer, audio, input, saves, options, memory container |
 | `netplay/` | `gladiusnet.dll`: online versus, prebuilt (source not included) |
 | `tools/` | XBE → PE converter (`xbe2pe.py`), XBE/ISO readers, replacement tables, code generators, model / level / character converters |
-| `inventory/` | Data the converter reads: kernel import names, library boundaries, XDK symbol map |
 | `builder/` | GladiusPort Builder (Python/tkinter, packaged with PyInstaller) |
-| `third_party/` | dlmalloc, SDL2, XbSymbolDatabase (submodule) |
+| `third_party/` | dlmalloc, SDL2 |
 | `LICENSES/` | License texts of all third-party components (see `THIRD_PARTY_NOTICES.md`) |
 
 ---
@@ -305,8 +303,7 @@ by others. Thank you to all of them.
 - **[XbSymbolDatabase](https://github.com/Cxbx-Reloaded/XbSymbolDatabase)** (Cxbx-Reloaded project, MIT
   License): identifies the Xbox SDK library functions statically linked into `default.xbe` using OOVPA
   signatures (originally invented by Caustik, maintained by RadWolfie, jarupxx, PatrickvL and
-  contributors). The symbol inventory and the D3D/XAPI replacement tables are built from its output.
-  Included as a submodule.
+  contributors). The D3D/XAPI replacement tables are built from its output.
 - **[dlmalloc](https://gee.cs.oswego.edu/dl/html/malloc.html)** by Doug Lea (permissive MIT-style
   license): the allocator behind the deterministic memory container.
 - **[SDL2](https://www.libsdl.org/)** (zlib License): controller support.

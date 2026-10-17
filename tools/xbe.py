@@ -1,4 +1,4 @@
-"""XBE loader helpers for the Gladius PC port inventory (retail default.xbe, XDK 5558)."""
+"""XBE loader helpers for the Gladius PC port (retail default.xbe, XDK 5558)."""
 import struct
 
 XBE_PATH = r'C:\Users\ob\Desktop\Protius\default.xbe'

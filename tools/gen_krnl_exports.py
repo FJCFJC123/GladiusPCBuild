@@ -7,7 +7,7 @@
 """
 import os
 HERE = os.path.dirname(__file__)
-names = open(os.path.join(HERE, '..', 'inventory', 'kernel_import_names.txt')).read().split()
+from kernel_names import KERNEL_IMPORTS as names
 
 # implemented in src/*.cpp (critsec.cpp, krnl_time.cpp): direct kernel calls made by app code / CRT
 FORWARD = {'RtlInitializeCriticalSection', 'RtlEnterCriticalSection', 'RtlLeaveCriticalSection',

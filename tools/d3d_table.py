@@ -1,58 +1,152 @@
-"""Every Xbox D3D8 entry point the game/engine/CRI code calls -> replaced by gladiusport.dll (d3d_<Name>).
+"""Xbox D3D8 and DirectSound entry points the game calls, each replaced by gladiusport.dll (d3d_<Name> /
+dsound_<Name>). Rows: (address in the retail default.xbe, name, calling convention, stack dwords, register args).
 
-Built from XbSymbolDatabase output (conventions/argument counts for XDK 5558) restricted to targets listed in
-inventory/boundary.txt, plus the few unnamed ones identified by hand. (addr, name, conv, stack_args, register_args)
+Names and conventions come from XbSymbolDatabase (XDK 5558); three unnamed D3D functions were added by hand
+(D3D_Get2DSurfaceDesc, D3DDevice_CreatePushBuffer2, D3D_CreateSaveSurface).
 """
-import os, re
 
-HERE = os.path.dirname(__file__)
-
-MANUAL = [
-    (0x2AE040, 'D3D_Get2DSurfaceDesc', 'stdcall', 3, []),      # jmp 0x2B3410 (container, level, desc), ret 0xC
-    (0x2B01F0, 'D3DDevice_CreatePushBuffer2', 'stdcall', 2, []),   # size(+0x18 header), flag; Common 0x81020001
-    (0x2B1050, 'D3D_CreateSaveSurface', 'stdcall', 4, []),     # engine-save; ret 0x10
+D3D = [
+    (0x2A4CE0, 'D3DDevice_SetRenderState_PSTextureModes', 'stdcall', 1, []),
+    (0x2A4D10, 'D3DDevice_SetRenderState_Simple', 'fastcall', 0, ['ecx', 'edx']),
+    (0x2A4D40, 'D3DDevice_SetRenderStateNotInline', 'stdcall', 2, []),
+    (0x2A5590, 'D3DDevice_SetRenderState_EdgeAntiAlias', 'stdcall', 1, []),
+    (0x2A55D0, 'D3DDevice_SetRenderState_ShadowFunc', 'stdcall', 1, []),
+    (0x2A5610, 'D3DDevice_SetRenderState_FogColor', 'stdcall', 1, []),
+    (0x2A5660, 'D3DDevice_SetRenderState_CullMode', 'stdcall', 1, []),
+    (0x2A56D0, 'D3DDevice_SetRenderState_FrontFace', 'stdcall', 1, []),
+    (0x2A5710, 'D3DDevice_SetRenderState_NormalizeNormals', 'stdcall', 1, []),
+    (0x2A5750, 'D3DDevice_SetRenderState_TextureFactor', 'stdcall', 1, []),
+    (0x2A57B0, 'D3DDevice_SetRenderState_LineWidth', 'stdcall', 1, []),
+    (0x2A5820, 'D3DDevice_SetRenderState_Dxt1NoiseEnable', 'stdcall', 1, []),
+    (0x2A58A0, 'D3DDevice_SetRenderState_ZBias', 'stdcall', 1, []),
+    (0x2A5920, 'D3DDevice_SetRenderState_LogicOp', 'stdcall', 1, []),
+    (0x2A5980, 'D3DDevice_SetRenderState_FillMode', 'stdcall', 1, []),
+    (0x2A59D0, 'D3DDevice_SetRenderState_BackFillMode', 'stdcall', 1, []),
+    (0x2A5A30, 'D3DDevice_SetRenderState_TwoSidedLighting', 'stdcall', 1, []),
+    (0x2A5AB0, 'D3DDevice_SetRenderState_VertexBlend', 'stdcall', 1, []),
+    (0x2A5B00, 'D3DDevice_SetTextureState_TexCoordIndex', 'stdcall', 2, []),
+    (0x2A5C10, 'D3DDevice_SetTextureState_BumpEnv', 'stdcall', 3, []),
+    (0x2A5C80, 'D3DDevice_SetTextureState_BorderColor', 'stdcall', 2, []),
+    (0x2A5CC0, 'D3DDevice_SetTextureState_ColorKeyColor', 'stdcall', 2, []),
+    (0x2A6590, 'D3DDevice_SetDepthClipPlanes', 'stdcall', 3, []),
+    (0x2A6630, 'D3DDevice_SetRenderState_ZEnable', 'stdcall', 1, []),
+    (0x2A66C0, 'D3DDevice_SetRenderState_StencilEnable', 'stdcall', 1, []),
+    (0x2A6750, 'D3DDevice_SetRenderState_StencilFail', 'stdcall', 1, []),
+    (0x2A67C0, 'D3DDevice_SetRenderState_YuvEnable', 'stdcall', 1, []),
+    (0x2A67F0, 'D3DDevice_SetRenderState_OcclusionCullEnable', 'stdcall', 1, []),
+    (0x2A6860, 'D3DDevice_SetRenderState_StencilCullEnable', 'stdcall', 1, []),
+    (0x2A68D0, 'D3DDevice_SetRenderState_RopZCmpAlwaysRead', 'stdcall', 1, []),
+    (0x2A68F0, 'D3DDevice_SetRenderState_RopZRead', 'stdcall', 1, []),
+    (0x2A6910, 'D3DDevice_SetRenderState_DoNotCullUncompressed', 'stdcall', 1, []),
+    (0x2A6930, 'D3DDevice_SetRenderState_MultiSampleMode', 'stdcall', 1, []),
+    (0x2A6960, 'D3DDevice_SetRenderState_MultiSampleRenderTargetMode', 'stdcall', 1, []),
+    (0x2A6990, 'D3DDevice_SetRenderState_MultiSampleAntiAlias', 'stdcall', 1, []),
+    (0x2A6A10, 'D3DDevice_SetRenderState_MultiSampleMask', 'stdcall', 1, []),
+    (0x2A6A60, 'D3DDevice_SetRenderState_SampleAlpha', 'stdcall', 1, []),
+    (0x2A6D20, 'D3DDevice_SelectVertexShaderDirect', 'stdcall', 2, []),
+    (0x2A71E0, 'D3DDevice_SetVertexShaderConstant1Fast', 'fastcall', 0, ['ecx', 'edx']),
+    (0x2A72E0, 'D3DDevice_SetVertexShaderConstantNotInlineFast', 'fastcall', 1, ['ecx', 'edx']),
+    (0x2A7670, 'D3DDevice_SetStreamSource', 'stdcall', 3, []),
+    (0x2A7800, 'D3DDevice_LoadVertexShaderProgram', 'stdcall', 2, []),
+    (0x2A7960, 'D3DDevice_SetShaderConstantMode', 'stdcall', 1, []),
+    (0x2A7BD0, 'D3DDevice_SetVertexShader', 'stdcall', 1, []),
+    (0x2A8330, 'D3DDevice_SetGammaRamp', 'stdcall', 2, []),
+    (0x2A8450, 'D3DDevice_SetTransform', 'stdcall', 2, []),
+    (0x2A8640, 'D3DDevice_SetMaterial', 'stdcall', 1, []),
+    (0x2A8770, 'D3DDevice_SwitchTexture', 'fastcall', 1, ['ecx', 'edx']),
+    (0x2A87E0, 'D3DDevice_Release', 'stdcall', 0, []),
+    (0x2A88C0, 'D3DDevice_SetVerticalBlankCallback', 'stdcall', 1, []),
+    (0x2A8900, 'D3DDevice_BlockUntilVerticalBlank', 'stdcall', 0, []),
+    (0x2A9340, 'D3DDevice_SetRenderTarget', 'stdcall', 2, []),
+    (0x2A9AD0, 'D3DDevice_CopyRects', 'stdcall', 5, []),
+    (0x2A9E00, 'D3DDevice_GetRenderTarget2', 'stdcall', 0, []),
+    (0x2A9E20, 'D3DDevice_GetDepthStencilSurface2', 'stdcall', 0, []),
+    (0x2A9E40, 'D3DDevice_SetViewport', 'stdcall', 1, []),
+    (0x2AA070, 'D3DDevice_SetLight', 'stdcall', 2, []),
+    (0x2AA330, 'D3DDevice_LightEnable', 'stdcall', 2, []),
+    (0x2AA4C0, 'D3DDevice_SetTexture', 'stdcall', 2, []),
+    (0x2AAF40, 'D3DDevice_SetScissors', 'stdcall', 3, []),
+    (0x2AB2C0, 'D3DDevice_PersistDisplay', 'stdcall', 0, []),
+    (0x2ABDA0, 'D3DDevice_InsertCallback', 'stdcall', 3, []),
+    (0x2ABE10, 'D3DDevice_BeginPush_4', 'stdcall', 1, []),
+    (0x2ABE30, 'D3DDevice_EndPush', 'stdcall', 1, []),
+    (0x2AC310, 'D3DDevice_MakeSpace', 'stdcall', 0, []),
+    (0x2AC320, 'D3DDevice_BeginStateBig', 'stdcall', 1, []),
+    (0x2AD0D0, 'D3DDevice_Swap', 'stdcall', 1, []),
+    (0x2AD1C0, 'D3DDevice_SetBackBufferScale', 'stdcall', 2, []),
+    (0x2AD680, 'D3DDevice_DrawVerticesUP', 'stdcall', 4, []),
+    (0x2AD9D0, 'D3DDevice_DrawIndexedVertices', 'stdcall', 3, []),
+    (0x2ADF80, 'D3DDevice_CreateTexture2', 'stdcall', 7, []),
+    (0x2AE040, 'D3D_Get2DSurfaceDesc', 'stdcall', 3, []),
+    (0x2AE050, 'D3DTexture_GetSurfaceLevel2', 'stdcall', 2, []),
+    (0x2AE0A0, 'D3DTexture_LockRect', 'stdcall', 5, []),
+    (0x2AE3D0, 'D3DResource_AddRef', 'stdcall', 1, []),
+    (0x2AE410, 'D3DResource_Release', 'stdcall', 1, []),
+    (0x2AE5A0, 'D3DResource_Register', 'stdcall', 2, []),
+    (0x2AE5D0, 'D3DResource_BlockUntilNotBusy', 'stdcall', 1, []),
+    (0x2AE800, 'D3D_SetPushBufferSize', 'stdcall', 2, []),
+    (0x2AE820, 'Direct3D_CreateDevice', 'stdcall', 6, []),
+    (0x2AEE50, 'D3DDevice_SetPixelShaderProgram', 'stdcall', 1, []),
+    (0x2AF490, 'D3DDevice_SetPixelShaderConstant', 'stdcall', 3, []),
+    (0x2AF7D0, 'D3DDevice_Clear', 'stdcall', 6, []),
+    (0x2B01F0, 'D3DDevice_CreatePushBuffer2', 'stdcall', 2, []),
+    (0x2B0280, 'D3DDevice_BeginPushBuffer', 'stdcall', 1, []),
+    (0x2B02F0, 'D3DDevice_EndPushBuffer', 'stdcall', 0, []),
+    (0x2B0E60, 'D3DVertexBuffer_Lock2', 'stdcall', 2, []),
+    (0x2B1050, 'D3D_CreateSaveSurface', 'stdcall', 4, []),
 ]
-KEEP_NATIVE = {0x2AE8D0}                                       # returns 1, pure
 
-
-def _used_targets(prefixes):
-    used = set()
-    for line in open(os.path.join(HERE, '..', 'inventory', 'boundary.txt')):
-        a, n = int(line.split()[0], 16), line.split()[1]
-        if n.startswith(prefixes):
-            used.add(a)
-    return used
-
-
-def _from_symbols(lib, used):
-    """(addr, name, conv, stack_dwords, regs) for XbSymbolDatabase functions of `lib` in `used`.
-    'psh2' marks an 8-byte by-value argument (two stack dwords)."""
-    rows = {}
-    for line in open(os.path.join(HERE, '..', 'inventory', 'xbsymbols_raw.txt')):
-        m = re.match(lib + r'__FUN__(\w+?)__(\w+)\((.*)\) = 0x([0-9a-f]+)', line.strip())
-        if not m:
-            continue
-        conv, name, args, addr = m.groups()
-        addr = int(addr, 16)
-        if addr in used:
-            a = [x.strip() for x in args.split(',') if x.strip()]
-            stack = sum(2 if x.startswith('psh2') else 1 for x in a if x.startswith('psh'))
-            rows[addr] = (addr, name, conv, stack, [x.split()[0] for x in a if not x.startswith('psh')])
-    return rows
+DSOUND = [
+    (0x30CD9E, 'IDirectSound_Release', 'stdcall', 1, []),
+    (0x30CDB4, 'IDirectSoundBuffer_Unlock', 'stdcall', 5, []),
+    (0x30CDD4, 'IDirectSoundBuffer_Release', 'stdcall', 1, []),
+    (0x30CEA2, 'DirectSoundOverrideSpeakerConfig', 'stdcall', 1, []),
+    (0x30EFD1, 'IDirectSound_GetCaps', 'stdcall', 2, []),
+    (0x30F009, 'IDirectSound_DownloadEffectsImage', 'stdcall', 5, []),
+    (0x30F0B5, 'IDirectSound_SetMixBinHeadroom', 'stdcall', 3, []),
+    (0x30F197, 'IDirectSoundBuffer_SetVolume', 'stdcall', 2, []),
+    (0x30F207, 'IDirectSoundBuffer_SetFilter', 'stdcall', 2, []),
+    (0x30F223, 'IDirectSoundBuffer_SetHeadroom', 'stdcall', 2, []),
+    (0x30F23F, 'IDirectSoundBuffer_SetMixBinVolumes_8', 'stdcall', 2, []),
+    (0x30F25B, 'IDirectSoundBuffer_Play', 'stdcall', 4, []),
+    (0x30F2A3, 'IDirectSoundBuffer_Stop', 'stdcall', 1, []),
+    (0x30F2BB, 'IDirectSoundBuffer_StopEx', 'stdcall', 4, []),
+    (0x30F31F, 'IDirectSoundBuffer_SetLoopRegion', 'stdcall', 3, []),
+    (0x30F33F, 'IDirectSoundBuffer_GetStatus', 'stdcall', 2, []),
+    (0x30F35B, 'IDirectSoundBuffer_GetCurrentPosition', 'stdcall', 3, []),
+    (0x30F37B, 'IDirectSoundBuffer_SetCurrentPosition', 'stdcall', 2, []),
+    (0x30F397, 'IDirectSoundBuffer_Lock', 'stdcall', 8, []),
+    (0x30F43B, 'IDirectSoundStream_SetVolume', 'stdcall', 2, []),
+    (0x30F44F, 'IDirectSoundStream_SetFilter', 'stdcall', 2, []),
+    (0x30F459, 'IDirectSoundStream_SetMixBinVolumes_8', 'stdcall', 2, []),
+    (0x30F45E, 'IDirectSoundStream_Pause', 'stdcall', 2, []),
+    (0x30F4D1, 'DirectSoundDoWork', 'stdcall', 0, []),
+    (0x311053, 'IDirectSoundBuffer_SetFrequency', 'stdcall', 2, []),
+    (0x31108B, 'IDirectSoundBuffer_SetMixBins', 'stdcall', 2, []),
+    (0x3112E2, 'IDirectSoundStream_SetFrequency', 'stdcall', 2, []),
+    (0x3112EC, 'IDirectSoundStream_SetMixBins', 'stdcall', 2, []),
+    (0x311F71, 'IDirectSound_CommitDeferredSettings', 'stdcall', 1, []),
+    (0x31254E, 'IDirectSound_CreateSoundBuffer', 'stdcall', 4, []),
+    (0x3125B6, 'IDirectSound_SetDistanceFactor', 'stdcall', 3, []),
+    (0x3125DA, 'IDirectSound_SetDopplerFactor', 'stdcall', 3, []),
+    (0x3125FE, 'IDirectSound_SetOrientation', 'stdcall', 8, []),
+    (0x312648, 'IDirectSound_SetPosition', 'stdcall', 5, []),
+    (0x3126A1, 'IDirectSound_SetVelocity', 'stdcall', 5, []),
+    (0x3126D6, 'IDirectSound_SetI3DL2Listener', 'stdcall', 3, []),
+    (0x31289C, 'DirectSoundCreate', 'stdcall', 3, []),
+    (0x3128E3, 'DirectSoundCreateBuffer', 'stdcall', 2, []),
+    (0x31293A, 'DirectSoundCreateStream', 'stdcall', 2, []),
+]
 
 
 def entries():
-    rows = _from_symbols('D3D8', _used_targets(('D3D8!', 'D3D!')))
-    for e in MANUAL:
-        rows[e[0]] = e
-    return [rows[a] for a in sorted(rows) if a not in KEEP_NATIVE]
+    return list(D3D)
 
 
 def dsound_entries():
-    rows = _from_symbols('DSOUND', _used_targets(('DSOUND!',)))
-    return [rows[a] for a in sorted(rows)]
+    return list(DSOUND)
 
 
 if __name__ == '__main__':
-    for e in entries():
+    for e in entries() + dsound_entries():
         print(e)
