@@ -908,11 +908,6 @@ void d3d_shadow_apply()
             same = worst <= 1e-3f;
         }
         // other meshes: placement (M) decides; bone slots aren't compared (they hold the last skinned character's bones)
-        for (int q = 0; q < 0 && same; q++) {
-            float d = fabsf(e.consts[q] - src[q]) / (1 + fabsf(src[q]));
-            worst = d > worst ? d : worst;
-            same = worst <= 1e-3f;
-        }
         bool msame = true;
         for (int i = 0; i < 16 && msame && !view_bones; i++)
             msame = fabsf(e.M[i] - M[i]) <= 1e-3f * (1 + fabsf(M[i]));

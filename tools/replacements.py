@@ -140,47 +140,7 @@ REPLACE = [
 # a .port block standing in for the Xbox KTHREAD (+0x28 TlsData != 0).
 FS_TLS_ARRAY = [0x277883, 0x2779CD, 0x277A2A, 0x282034, 0x285B73, 0x285B90]
 
-# Fixed 720p patches (640x480 -> 1280x720), off unless GLADIUS_720P=1 when generating gladius.exe. Superseded by
-# [video] Resolution (src/game_resolution.cpp), which patches the same sites at startup with any size.
-ENABLE_720P = __import__('os').environ.get('GLADIUS_720P') == '1'
-HD_720P_PATCHES = [
-    (0x6DC7C, 'e001', 'd002', '720p: startup init height 480 -> 720'),
-    (0x6DC81, '8002', '0005', '720p: startup init width 640 -> 1280'),
-    (0x1BD0AA, '8002', '0005', '720p: D3DDevice_SetScissors default width 640 -> 1280'),
-    (0x1BD0AF, 'e001', 'd002', '720p: D3DDevice_SetScissors default height 480 -> 720'),
-    (0x1CD475, '8002', '0005', '720p: copy/backbuffer rect width 640 -> 1280'),
-    (0x1CD47D, 'e001', 'd002', '720p: copy/backbuffer rect height 480 -> 720'),
-    (0x1CE9A4, '8002', '0005', '720p: render init width 640 -> 1280'),
-    (0x1CE9A9, 'e001', 'd002', '720p: render init height 480 -> 720'),
-    (0x1D61D0, 'e001', 'd002', '720p: display surface height 480 -> 720'),
-    (0x1D61D5, '8002', '0005', '720p: display surface width 640 -> 1280'),
-    (0x1D632B, '8002', '0005', '720p: vertical-blank surface width 640 -> 1280'),
-    (0x1D6332, 'e001', 'd002', '720p: vertical-blank surface height 480 -> 720'),
-    (0x1D6C51, 'e001', 'd002', '720p: texture lock/create height 480 -> 720'),
-    (0x1D6C56, '8002', '0005', '720p: texture lock/create width 640 -> 1280'),
-    (0x1D6C9E, 'e001', 'd002', '720p: texture lock/create height 480 -> 720'),
-    (0x1D6CA3, '8002', '0005', '720p: texture lock/create width 640 -> 1280'),
-    (0x21B77B, '8002', '0005', '720p: CRI/video fallback width 640 -> 1280'),
-    (0x21B785, 'e001', 'd002', '720p: CRI/video fallback height 480 -> 720'),
-    # four more edits that make the 2D layer fill the frame: D3D_SetViewportConstants floats (480.0 -> 728.0 kept as
-    # the reference patch had it) and the 2D centering at 0x1D5D67 / 0x1D5D83
-    (0x1CD409, 'f043', '3644', '720p FIX: viewport-constant height 480.0f -> 728.0f'),
-    (0x1CD40E, '2044', 'a044', '720p FIX: viewport-constant width 640.0f -> 1280.0f'),
-    (0x1D5D68, '8002', '0005', '720p FIX: 2D centering width 640 -> 1280'),
-    (0x1D5D84, 'e001', 'd002', '720p FIX: 2D centering height 480 -> 720'),
-    (0x37FD38, '8002', '0005', '720p: projection/aspect data width 640 -> 1280'),
-    (0x37FD3C, 'e001', 'd002', '720p: projection/aspect data height 480 -> 720'),
-    (0x385820, '8002', '0005', '720p: CRI/video mode table width 640 -> 1280'),
-    (0x385824, 'e001', 'd002', '720p: CRI/video mode table height 480 -> 720'),
-    (0x38582C, '8002', '0005', '720p: CRI/video mode table width 640 -> 1280'),
-    (0x385830, 'e001', 'd002', '720p: CRI/video mode table height 480 -> 720'),
-    (0x385838, '8002', '0005', '720p: CRI/video mode table width 640 -> 1280'),
-    (0x38583C, 'e001', 'd002', '720p: CRI/video mode table height 480 -> 720'),
-    (0x385844, '8002', '0005', '720p: CRI/video mode table width 640 -> 1280'),
-    (0x385848, 'e001', 'd002', '720p: CRI/video mode table height 480 -> 720'),
-]
 PATCHES = (
-    (HD_720P_PATCHES if ENABLE_720P else []) +
     [(a, '648b0d04000000', '648b0d2c000000', 'CRT: Xbox TLS array fs:[4] -> Windows fs:[0x2C]') for a in FS_TLS_ARRAY] +
     [(0x285BEB, '648b3d04000000', '648b3d2c000000', 'XAPI TLS helper: fs:[4] -> fs:[0x2C]')] +
     [(a, '640fb60524000000', '31c0909090909090', 'CRT: KeGetCurrentIrql -> 0 (PASSIVE_LEVEL)')
