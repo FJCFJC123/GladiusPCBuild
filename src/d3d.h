@@ -147,6 +147,10 @@ struct D3DState {
     ID3D11Texture2D *gnrm_tex;
     ID3D11RenderTargetView *gnrm_rtv;
     ID3D11ShaderResourceView *gnrm_srv;
+    // motion vectors (render target 3): uv offset to where each opaque program pixel was last frame (TAA)
+    ID3D11Texture2D *gmv_tex;
+    ID3D11RenderTargetView *gmv_rtv;
+    ID3D11ShaderResourceView *gmv_srv;
     bool soft_particles;           // [video] SoftParticles: blended FX fade where they meet geometry
     float soft_range;              // [video] SoftRange: view-depth distance of the fade
     float show_depth;              // [debug] ShowDepth=scale: final pass shows the G-buffer depth (0 = off)

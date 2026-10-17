@@ -446,6 +446,11 @@ static bool create_scene_targets()
         g_d3d.dev->CreateRenderTargetView(g_d3d.gnrm_tex, nullptr, &g_d3d.gnrm_rtv);
         g_d3d.dev->CreateShaderResourceView(g_d3d.gnrm_tex, nullptr, &g_d3d.gnrm_srv);
     }
+    td.Format = DXGI_FORMAT_R16G16_FLOAT;               // motion vectors (uv offset to last frame, TAA)
+    if (SUCCEEDED(g_d3d.dev->CreateTexture2D(&td, nullptr, &g_d3d.gmv_tex))) {
+        g_d3d.dev->CreateRenderTargetView(g_d3d.gmv_tex, nullptr, &g_d3d.gmv_rtv);
+        g_d3d.dev->CreateShaderResourceView(g_d3d.gmv_tex, nullptr, &g_d3d.gmv_srv);
+    }
     return g_d3d.rtv && g_d3d.scene_srv;
 }
 
@@ -460,6 +465,9 @@ static void release_scene_targets()
     if (g_d3d.gnrm_srv) { g_d3d.gnrm_srv->Release(); g_d3d.gnrm_srv = nullptr; }
     if (g_d3d.gnrm_rtv) { g_d3d.gnrm_rtv->Release(); g_d3d.gnrm_rtv = nullptr; }
     if (g_d3d.gnrm_tex) { g_d3d.gnrm_tex->Release(); g_d3d.gnrm_tex = nullptr; }
+    if (g_d3d.gmv_srv) { g_d3d.gmv_srv->Release(); g_d3d.gmv_srv = nullptr; }
+    if (g_d3d.gmv_rtv) { g_d3d.gmv_rtv->Release(); g_d3d.gmv_rtv = nullptr; }
+    if (g_d3d.gmv_tex) { g_d3d.gmv_tex->Release(); g_d3d.gmv_tex = nullptr; }
 }
 
 static bool recreate_present_target()

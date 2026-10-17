@@ -233,8 +233,9 @@ static void bind_targets(bool soft = false)
         return;
     g_bound.targets = true;
     g_bound.soft = soft;
-    ID3D11RenderTargetView *rt[3] = {g_d3d.rtv, g_d3d.gbuf_rtv, g_d3d.gnrm_rtv};
-    g_d3d.ctx->OMSetRenderTargets(soft || !g_d3d.gbuf_rtv ? 1 : g_d3d.gnrm_rtv ? 3 : 2, rt, g_dsv);
+    ID3D11RenderTargetView *rt[4] = {g_d3d.rtv, g_d3d.gbuf_rtv, g_d3d.gnrm_rtv, g_d3d.gmv_rtv};
+    UINT n = soft || !g_d3d.gbuf_rtv ? 1 : !g_d3d.gnrm_rtv ? 2 : g_d3d.gmv_rtv ? 4 : 3;
+    g_d3d.ctx->OMSetRenderTargets(n, rt, g_dsv);
     if (soft)
         g_d3d.ctx->PSSetShaderResources(4, 1, &g_d3d.gbuf_srv);
     D3D11_VIEWPORT vp = {0, 0, (float)g_d3d.scene_width, (float)g_d3d.scene_height, 0, 1};
@@ -316,6 +317,8 @@ static void apply_state(bool pretransformed)
         !pretransformed && !rt.BlendEnable && g_nv[NV_DEPTH_MASK / 4] && g_nv[NV_DEPTH_TEST_ENABLE / 4] && rt.RenderTargetWriteMask
             ? D3D11_COLOR_WRITE_ENABLE_RED : 0;
     bd.RenderTarget[2].RenderTargetWriteMask = bd.RenderTarget[1].RenderTargetWriteMask ? D3D11_COLOR_WRITE_ENABLE_ALL : 0;
+    bd.RenderTarget[3].RenderTargetWriteMask =          // motion vectors: the same opaque draws
+        bd.RenderTarget[1].RenderTargetWriteMask ? D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN : 0;
     DWORD bc = g_nv[NV_BLEND_COLOR / 4];
     float factor[4] = {((bc >> 16) & 255) / 255.f, ((bc >> 8) & 255) / 255.f, (bc & 255) / 255.f, (bc >> 24) / 255.f};
     if (!g_bound.blend || memcmp(&bd, &g_bound.bd, sizeof bd) || memcmp(factor, g_bound.factor, sizeof factor)) {
@@ -1162,6 +1165,10 @@ HRESULT __stdcall d3d_D3DDevice_Clear(DWORD count, const void *rects, DWORD flag
         if (g_d3d.gnrm_rtv) {
             float none[4] = {};
             g_d3d.ctx->ClearRenderTargetView(g_d3d.gnrm_rtv, none);
+        }
+        if (g_d3d.gmv_rtv) {                            // motion: unknown (TAA falls back to the camera)
+            float unknown[4] = {60000.0f, 0, 0, 0};
+            g_d3d.ctx->ClearRenderTargetView(g_d3d.gmv_rtv, unknown);
         }
     }
     if (flags & 3)

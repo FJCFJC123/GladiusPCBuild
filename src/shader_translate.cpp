@@ -336,7 +336,8 @@ static void vs_input(int slot, DWORD fmt, std::ostringstream &decl, std::ostring
 }
 
 static const char *k_vs_prelude = R"(
-cbuffer VSConst : register(b0) { float4 c[192]; float4 attr_const[16]; float4 rt_size; float4 vmat; };
+cbuffer VSConst : register(b0) { float4 c[192]; float4 attr_const[16]; float4 rt_size; float4 vmat; float4 mvinfo; };
+cbuffer VSPrev : register(b2) { float4 cp[192]; };     // the same draw's constants last frame (motion vectors)
 float rcp_x(float x) { return x == 0 ? 1.#INF : 1.0 / x; }
 float rcc_x(float x) { float r = rcp_x(x); float a = clamp(abs(r), 5.42101e-20, 1.84467e+19); return r < 0 ? -a : a; }
 float rsq_x(float x) { x = abs(x); return x == 0 ? 1.#INF : rsqrt(x); }
@@ -353,6 +354,26 @@ float3 unpack_cmp(uint u) {
 static const char *k_io_fields = "float4 pos : SV_Position; float4 d0 : COLOR0; float4 d1 : COLOR1; float4 t0 : TEXCOORD0; "
                                  "float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float fog : FOG;";
 static const char *k_io_lit = " float4 ln : TEXCOORD4; float4 lc : TEXCOORD5; float4 lp : TEXCOORD6;";
+// motion vectors: this frame's and last frame's clip position (x, y, w; mc.w = 1 when last frame's is known)
+static const char *k_io_mv = " float4 mc : TEXCOORD7; float4 mp : TEXCOORD8;";
+
+// The vertex program's body again on last frame's constants (c[ -> cp[), for the position only: the compiler drops
+// every other output of this copy.
+static std::string on_prev_constants(const std::string &body)
+{
+    std::string o;
+    o.reserve(body.size() + 64);
+    for (size_t i = 0; i < body.size(); i++) {
+        bool ident = i && (isalnum((unsigned char)body[i - 1]) || body[i - 1] == '_');
+        if (body[i] == 'c' && i + 1 < body.size() && body[i + 1] == '[' && !ident) {
+            o += "cp[";
+            i++;
+        } else {
+            o += body[i];
+        }
+    }
+    return o;
+}
 
 // ------------------------------------------------------------------------------------------------ lighting
 // Recognise the engine's generated lighting block (by its own #define names, so the register / slot numbers come
@@ -470,8 +491,22 @@ std::string translate_vs(const std::string &src, const DWORD formats[16], std::v
     // relight: only with a streamed normal (formats[n] for vN); the draw picks the relight pixel shader the same way
     int vn = lit && lit->relight ? atoi(lit->vnormal.c_str() + 1) : -1;
     bool relight = vn >= 0 && vn < 16 && formats[vn] && (formats[vn] & 0xFF) != 0x02;
-    h << "struct VOut { " << k_io_fields << (lit && lit->ok || relight ? k_io_lit : "") << " };\n";
+    h << "struct VOut { " << k_io_fields << k_io_mv << (lit && lit->ok || relight ? k_io_lit : "") << " };\n";
     h << "struct VIn {\n" << decl.str() << "    uint vid : SV_VertexID;\n};\n";
+    // last frame's clip position (x, y, w) of this vertex: the same program on last frame's constants
+    h << "float4 prev_pos(float4 v0, float4 v1, float4 v2, float4 v3, float4 v4, float4 v5, float4 v6, float4 v7,\n"
+         "                float4 v8, float4 v9, float4 v10, float4 v11, float4 v12, float4 v13, float4 v14, float4 v15)\n{\n";
+    h << "    float4 r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0, r6 = 0, r7 = 0, r8 = 0, r9 = 0, r10 = 0, r11 = 0;\n";
+    h << "    float4 oPos = float4(0, 0, 0, 1), oD0 = 0, oD1 = 0, oB0 = 0, oB1 = 0, oT0 = 0, oT1 = 0, oT2 = 0, oT3 = 0;\n";
+    h << "    float oFog = 1, oPts = 1;\n    int a0 = 0;\n";
+    h << on_prev_constants(cx.body.str());
+    if (screenspace) {                                 // pixels -> clip over the whole target, as in main
+        h << "    float w = oPos.w == 0 ? 1 : oPos.w;\n";
+        h << "    return float4((oPos.x / rt_size.x * 2 - 1) * w, (1 - oPos.y / rt_size.y * 2) * w, 0, w);\n";
+    } else {
+        h << "    return oPos;\n";
+    }
+    h << "}\n";
     h << "VOut main(VIn i)\n{\n";
     h << "    float4 v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;\n" << decode.str();
     // material sway (foliage cards, banners): vmat = (class, seconds, amplitude); position input v0, object units.
@@ -494,6 +529,9 @@ std::string translate_vs(const std::string &src, const DWORD formats[16], std::v
     } else {
         h << "    o.pos = oPos;\n";
     }
+    h << "    float4 mpos = 0;\n";
+    h << "    [branch] if (mvinfo.x > 0) mpos = prev_pos(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);\n";
+    h << "    o.mc = float4(o.pos.xyw, mvinfo.x); o.mp = float4(mpos.xyw, 0);   // before the jitter\n";
     h << "    o.pos.xy += rt_size.zw * o.pos.w;   // TAA sub-pixel jitter (0 when off / after the 3D resolve)\n";
     h << "    o.d0 = saturate(oD0); o.d1 = saturate(oD1); o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = oFog;\n";
     if (lit && lit->ok)                                // lighting normal (length kept: interpolation shortens it)
@@ -673,7 +711,7 @@ cbuffer PSConst : register(b1) { float4 pc_in[8]; float4 fog_color; float4 alpha
 Texture2D<float> smap_px : register(t5);
 SamplerComparisonState scmp_px : register(s5);
 Texture2D<float> gdepth : register(t4);                 // G-buffer view depth (soft-particle draws only)
-struct POut { float4 c : SV_Target0; float4 g : SV_Target1; float4 n : SV_Target2; };
+struct POut { float4 c : SV_Target0; float4 g : SV_Target1; float4 n : SV_Target2; float4 m : SV_Target3; };
 float fog_factor(float d)
 {
     int m = (int)fog_params.x;
@@ -713,9 +751,10 @@ std::string translate_ps(const std::string &src, std::vector<std::string> *warni
     h << k_ps_prelude;
     bool rl = lit && lit->relight && !lit->ok;          // ambient-only shader with a sun term
     bool pp = lit && lit->ok || rl;
-    h << "struct PIn { " << k_io_fields << (pp ? k_io_lit : "") << " };\n";
+    h << "struct PIn { " << k_io_fields << k_io_mv << (pp ? k_io_lit : "") << " };\n";
     if (pp) {
-        h << "cbuffer VSConst : register(b0) { float4 c[192]; float4 attr_const[16]; float4 rt_size; float4 vmat; };\n";
+        h << "cbuffer VSConst : register(b0) { float4 c[192]; float4 attr_const[16]; float4 rt_size; float4 vmat; "
+             "float4 mvinfo; };\n";
         h << "float4 cx(int n) { return c[clamp(n + 96, 0, 191)]; }   // Xbox constant slot\n";
         // relief from the texture: luminance as height, normal perturbed with screen-space derivatives (no tangents);
         // k = height in surface units ([video] Bump)
@@ -840,6 +879,9 @@ std::string translate_ps(const std::string &src, std::vector<std::string> *warni
              "      po.n = dot(vn, vn) > 1e-8 ? float4(normalize(vn) * 0.5 + 0.5, 1) : float4(0, 0, 0, 0); }\n";
     else
         h << "    po.n = float4(0, 0, 0, 0);\n";
+    // motion vector: this pixel's surface from last frame's screen position, in uv (x 60000 = unknown)
+    h << "    po.m = i.mc.w > 0.5 && i.mp.z > 1e-6 ? float4((i.mc.xy / i.mc.z - i.mp.xy / i.mp.z) * float2(0.5, -0.5), 0, 0)\n"
+         "                                          : float4(60000, 0, 0, 0);\n";
     h << "    return po;\n}\n";
     if (warnings)
         *warnings = cx.warnings;

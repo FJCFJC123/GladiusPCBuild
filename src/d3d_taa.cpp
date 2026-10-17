@@ -1,6 +1,7 @@
 // Temporal anti-aliasing ([video] AntiAlias=taa; F9 cycles off / FXAA / TAA). 3D draws are jittered by a Halton(2,3)
 // sub-pixel offset over 8 frames. The 3D image is resolved before the 2D layer is drawn, so the HUD never smears:
-// last frame's image is reprojected with the camera motion, clamped to the current 3x3 neighbourhood and blended 1:9.
+// last frame's image is reprojected - per pixel by the motion vectors of opaque program draws (d3d_program.cpp),
+// elsewhere by the camera's motion - clamped to the current 3x3 neighbourhood and blended 1:9.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
@@ -29,6 +30,7 @@ static const char *k_hlsl = R"(
 Texture2D cur : register(t0);
 Texture2D hist : register(t1);
 Texture2D<float> gdepth : register(t2);
+Texture2D<float2> gmotion : register(t3);               // uv offset to last frame (x 60000 = unknown)
 SamplerState lin : register(s0);
 SamplerState pt : register(s1);
 cbuffer TaaCB : register(b0) {
@@ -68,7 +70,10 @@ float4 ps(V i) : SV_Target
     // the pixel centre, not the jittered sample: history is looked up where this output pixel was last frame
     float2 ndc = float2(i.uv.x * 2 - 1, 1 - i.uv.y * 2);
     float2 prev_uv = i.uv;
-    if (w > 0 && w < 60000) {
+    float2 mv = gmotion.Load(int3(i.uv / info.xy, 0));
+    if (mv.x < 30000) {                                 // the surface's own motion (moving / spinning / animated)
+        prev_uv = i.uv - mv;
+    } else if (w > 0 && w < 60000) {                    // no motion vector: the camera's motion
         float4 clip = float4(ndc * w, P.z * -w + P.w, w);          // z from P row 2 with view z = -w
         float4 pc = float4(dot(reproj[0], clip), dot(reproj[1], clip), dot(reproj[2], clip), dot(reproj[3], clip));
         if (pc.w > 1e-4) prev_uv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
@@ -171,15 +176,10 @@ static float halton(int i, int b)
     return r;
 }
 
-// A 3D box on a 2D screen (the school / shop character previews, game_resolution.cpp): its model spins, which the
-// camera-only reprojection cannot follow, so TAA steps aside there - no jitter, no history.
-extern DWORD g_sub_viewport_frame;
-static bool preview_frame() { return g_d3d.frame - g_sub_viewport_frame <= 1; }
-
 // Present: pick the next frame's jitter (only when this frame had 3D, so menus stay still).
 void d3d_taa_frame_begin()
 {
-    bool on = g_d3d.anti_alias == 2 && g_had_3d && !g_failed && !preview_frame();
+    bool on = g_d3d.anti_alias == 2 && g_had_3d && !g_failed;
     if (!on && g_hist_valid && g_d3d.anti_alias != 2)
         g_hist_valid = false;
     g_had_3d = false;
@@ -213,10 +213,6 @@ static void resolve()
 {
     g_pending = false;
     g_resolved = true;
-    if (preview_frame()) {
-        g_hist_valid = false;
-        return;
-    }
     if (!g_d3d.scene_tex || !g_d3d.gbuf_srv || !init() || !targets())
         return;
     prof_gpu_pass(GP_TAA);
@@ -243,8 +239,8 @@ static void resolve()
     cb[24] = g_jitter[0], cb[25] = g_jitter[1];
     ctx->UpdateSubresource(g_cb, 0, nullptr, cb, 0, 0);
     int out = g_cur ^ 1;
-    ID3D11ShaderResourceView *none[3] = {};
-    ctx->PSSetShaderResources(0, 3, none);
+    ID3D11ShaderResourceView *none[4] = {};
+    ctx->PSSetShaderResources(0, 4, none);
     ctx->OMSetRenderTargets(1, &g_hist_rtv[out], nullptr);
     D3D11_VIEWPORT vp = {0, 0, (float)g_w, (float)g_h, 0, 1};
     ctx->RSSetViewports(1, &vp);
@@ -259,10 +255,10 @@ static void resolve()
     ctx->PSSetConstantBuffers(0, 1, &g_cb);
     ID3D11SamplerState *smp[2] = {g_lin, g_pt};
     ctx->PSSetSamplers(0, 2, smp);
-    ID3D11ShaderResourceView *in[3] = {g_d3d.scene_srv, g_hist_srv[g_cur], g_d3d.gbuf_srv};
-    ctx->PSSetShaderResources(0, 3, in);
+    ID3D11ShaderResourceView *in[4] = {g_d3d.scene_srv, g_hist_srv[g_cur], g_d3d.gbuf_srv, g_d3d.gmv_srv};
+    ctx->PSSetShaderResources(0, 4, in);
     ctx->Draw(3, 0);
-    ctx->PSSetShaderResources(0, 3, none);
+    ctx->PSSetShaderResources(0, 4, none);
     ID3D11RenderTargetView *no_rt = nullptr;
     ctx->OMSetRenderTargets(1, &no_rt, nullptr);
     ctx->CopyResource(g_d3d.scene_tex, g_hist[out]);    // the 2D layer is drawn over the resolved image

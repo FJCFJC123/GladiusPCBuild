@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-enum { VSC = 192 + 16 + 2 };                            // float4s in the vertex constant block (d3d_program.cpp)
+enum { VSC = 192 + 16 + 3 };                            // float4s in the vertex constant block (d3d_program.cpp)
 struct Cast {
     ID3D11VertexShader *vs;
     ID3D11InputLayout *layout;
@@ -1151,6 +1151,7 @@ void d3d_shadow_apply()
         dst[(95 + 96) * 4 + 0] = s / 2, dst[(95 + 96) * 4 + 1] = s / 2;
         dst[208 * 4 + 0] = s, dst[208 * 4 + 1] = s;
         dst[208 * 4 + 2] = dst[208 * 4 + 3] = 0;        // no TAA jitter in the shadow map
+        dst[210 * 4 + 0] = 0;                           // no motion vectors either
     };
     static std::vector<UINT> win;                       // constant window per item (shared blocks share one)
     win.resize(items.size());

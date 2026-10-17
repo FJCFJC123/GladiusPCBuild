@@ -166,17 +166,14 @@ static void install_camera_apply()
     *(int32_t *)(p + 1) = (int32_t)((DWORD)camera_apply - (0x1AC974 + 5));
 }
 
-// gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels, y from the bottom): a sub-screen viewport (the 3D
-// character previews of the school / shop screens) is noted for TAA (d3d_taa.cpp: no TAA on those frames) and each
-// distinct one is logged once.
-DWORD g_sub_viewport_frame = 0xFFFFFFFF;                // d3d frame it was set in
+// [diagnostic] gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels, y from the bottom): each distinct
+// sub-screen viewport (the 3D character previews of the school / shop screens) is logged once.
 static void __cdecl note_viewport(const int *a)
 {
     static int seen[16][4], n;
     int w = *(const int *)0x37FD38, h = *(const int *)0x37FD3C;
     if (w <= 0 || h <= 0 || (a[0] == 0 && a[1] == 0 && a[2] == w && a[3] == h))
         return;
-    g_sub_viewport_frame = g_d3d.frame;
     if (n >= 16)
         return;
     for (int i = 0; i < n; i++)

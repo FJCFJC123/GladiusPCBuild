@@ -5,6 +5,7 @@
 #include <intrin.h>
 #include "shader_translate.h"
 #include <d3dcompiler.h>
+#include <d3d11_1.h>
 #include <array>
 #include <algorithm>
 #include <map>
@@ -508,7 +509,7 @@ static void init_program_objects()
     bd.Usage = D3D11_USAGE_DYNAMIC;                       // written with Map(DISCARD) by cb_put, when changed
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    bd.ByteWidth = (192 + 16 + 2) * 16;                   // c[192], attr_const[16], rt_size, material
+    bd.ByteWidth = (192 + 16 + 3) * 16;                   // c[192], attr_const[16], rt_size, material, motion
     g_d3d.dev->CreateBuffer(&bd, nullptr, &g_cb_vs);
     bd.ByteWidth = (8 + 1 + 1 + 4 + 1 + 1 + 1 + 5 + 1 + 3 + 1 + 8 + 1) * 16;  // ... fx params, fx lights, material
     g_d3d.dev->CreateBuffer(&bd, nullptr, &g_cb_ps);
@@ -728,6 +729,96 @@ static void fx_lights_put(float *p)
     }
 }
 
+// ------------------------------------------------------------------------------------------------ motion vectors
+// TAA motion vectors: each program draw's vertex shader also runs its position on the same draw's constants of last
+// frame (b2), and the pixel shader writes the difference (render target 3). A draw is matched to last frame's by its
+// identity (program, vertex streams, index list) and its order among identical draws (two units of one class share
+// a model). Every distinct constant block of a frame goes into one buffer, uploaded once at the next frame's first
+// draw; a matched draw binds its old block there by offset (D3D11.1). Unmatched draws: TAA uses the camera instead.
+static ID3D11DeviceContext1 *g_ctx1;
+static int g_mv_offsets = -1;                           // constant buffer offsets supported (-1 = not checked)
+static std::vector<float> g_mv_blocks;                  // this frame's distinct blocks, 192 float4 each
+static std::unordered_map<unsigned long long, UINT> g_mv_cur, g_mv_prev;   // draw identity -> block
+static std::unordered_map<unsigned long long, UINT> g_mv_seen;             // draws of an identity so far this frame
+static ID3D11Buffer *g_mv_buf;                          // last frame's blocks
+static UINT g_mv_buf_blocks;
+static DWORD g_mv_frame = 0xFFFFFFFF, g_mv_gen;
+static UINT g_mv_last = 0xFFFFFFFF;                     // block of the current constants (0xFFFFFFFF = none yet)
+enum { MV_BLOCK = 192 };                                // float4s per block (a multiple of 16: offset binding)
+
+static bool mv_supported()
+{
+    if (g_mv_offsets < 0) {
+        D3D11_FEATURE_DATA_D3D11_OPTIONS o = {};
+        g_mv_offsets = SUCCEEDED(g_d3d.dev->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &o, sizeof o)) &&
+                       o.ConstantBufferOffsetting &&
+                       SUCCEEDED(g_d3d.ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void **)&g_ctx1));
+        port_log("taa: motion vectors %s\n", g_mv_offsets ? "on" : "off (no constant buffer offsets)");
+    }
+    return g_mv_offsets > 0;
+}
+
+// first draw of a frame: last frame's blocks to the GPU, its identities become the ones to match
+static void mv_new_frame()
+{
+    g_mv_frame = g_d3d.frame;
+    g_mv_prev.swap(g_mv_cur);
+    g_mv_cur.clear();
+    g_mv_seen.clear();
+    g_mv_last = 0xFFFFFFFF;
+    UINT n = (UINT)(g_mv_blocks.size() / (MV_BLOCK * 4));
+    if (n) {
+        if (!g_mv_buf || g_mv_buf_blocks < n) {
+            if (g_mv_buf)
+                g_mv_buf->Release();
+            g_mv_buf = nullptr;
+            g_mv_buf_blocks = n + n / 2 + 64;
+            D3D11_BUFFER_DESC bd = {};
+            bd.ByteWidth = g_mv_buf_blocks * MV_BLOCK * 16;
+            bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (FAILED(g_d3d.dev->CreateBuffer(&bd, nullptr, &g_mv_buf)))
+                g_mv_buf = nullptr, g_mv_buf_blocks = 0;
+        }
+        D3D11_MAPPED_SUBRESOURCE m;
+        if (g_mv_buf && SUCCEEDED(g_d3d.ctx->Map(g_mv_buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            memcpy(m.pData, g_mv_blocks.data(), g_mv_blocks.size() * 4);
+            g_d3d.ctx->Unmap(g_mv_buf, 0);
+        } else {
+            g_mv_prev.clear();
+        }
+    } else {
+        g_mv_prev.clear();
+    }
+    g_mv_blocks.clear();
+}
+
+// This draw's last-frame constants: the offset of its block in g_mv_buf (float4s), or -1 when unknown.
+static long long mv_match(const BYTE *const streams[16], const UINT strides[16], UINT vertex_count,
+                          const std::vector<UINT> &indices, ID3D11Buffer *static_ib, const float *vsc)
+{
+    if (g_vsc_gen != g_mv_gen || g_mv_last == 0xFFFFFFFF) {     // new constants: a new block
+        g_mv_gen = g_vsc_gen;
+        g_mv_last = (UINT)(g_mv_blocks.size() / (MV_BLOCK * 4));
+        g_mv_blocks.insert(g_mv_blocks.end(), vsc, vsc + MV_BLOCK * 4);
+    }
+    unsigned long long h = 0xCBF29CE484222325ULL;
+    auto mix = [&](unsigned long long v) { h = (h ^ v) * 0x100000001B3ULL; };
+    mix(g_cur_vs);
+    for (int s = 0; s < 16; s++)
+        mix((unsigned long long)(uintptr_t)streams[s] ^ ((unsigned long long)strides[s] << 40));
+    mix(vertex_count);
+    mix(indices.size());
+    mix((uintptr_t)static_ib);
+    mix(indices.front());
+    mix(indices.back());
+    h ^= (unsigned long long)g_mv_seen[h]++ * 0x9E3779B97F4A7C15ULL;   // order among identical draws
+    g_mv_cur[h] = g_mv_last;
+    auto it = g_mv_prev.find(h);
+    return it == g_mv_prev.end() || !g_mv_buf ? -1 : (long long)it->second * MV_BLOCK;
+}
+
 // ------------------------------------------------------------------------------------------------ draw
 // One program draw. streams: raw data pointers / strides; indices: element order (already primitive-expanded).
 static void draw_program(const BYTE *const streams[16], const UINT strides[16], UINT vertex_count,
@@ -834,7 +925,7 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
     ProfScope pz_const(PZ_CONST);
 
     // constants
-    static float vsc[(192 + 16 + 2) * 4], vsc_bound[(192 + 16 + 2) * 4];
+    static float vsc[(192 + 16 + 3) * 4], vsc_bound[(192 + 16 + 3) * 4];
     static bool vsc_valid;
     static DWORD vsc_gen;
     // the constant block is copied only when the game wrote constants since the last draw; otherwise only the port's
@@ -881,8 +972,15 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
         }
         shadow_px = d3d_shadow_lookup(A, shadow_rows, &shadow_srv, &shadow_cmp, &shadow_texel, &shadow_strength);
     }
+    // motion vectors (TAA): last frame's constants of this draw, row 210 = known
+    if (g_mv_frame != g_d3d.frame)
+        mv_new_frame();
+    long long mv_first = -1;
+    if (g_d3d.anti_alias == 2 && g_d3d.gmv_rtv && mv_supported())
+        mv_first = mv_match(streams, strides, vertex_count, indices, static_ib, vsc);
+    vsc[210 * 4 + 0] = mv_first >= 0 ? 1.0f : 0.0f;
     if (vsc_fresh || !vsc_valid || memcmp(&vsc[(92 + 96) * 4], &vsc_bound[(92 + 96) * 4], 16) ||
-        memcmp(&vsc[208 * 4], &vsc_bound[208 * 4], 2 * 16))
+        memcmp(&vsc[208 * 4], &vsc_bound[208 * 4], 3 * 16))
         cb_put(g_cb_vs, vsc_bound, &vsc_valid, vsc, sizeof vsc);
     float psc[36 * 4] = {};
     static float psc_bound[36 * 4];
@@ -1021,6 +1119,16 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
     ctx->IASetPrimitiveTopology(topo);
     ctx->VSSetShader(vs->vs, nullptr, 0);
     ctx->VSSetConstantBuffers(0, 1, &g_cb_vs);
+    static long long mv_bound = -2;                     // b2: last frame's block (any buffer when unknown)
+    if (mv_first != mv_bound || mv_first < 0) {
+        if (mv_first >= 0) {
+            UINT first = (UINT)mv_first, num = MV_BLOCK;
+            g_ctx1->VSSetConstantBuffers1(2, 1, &g_mv_buf, &first, &num);
+        } else {
+            ctx->VSSetConstantBuffers(2, 1, &g_cb_vs);
+        }
+        mv_bound = mv_first;
+    }
     ctx->PSSetShader(ps, nullptr, 0);
     ID3D11Buffer *pcb[2] = {g_cb_vs, g_cb_ps};          // b0: vertex constants (per-pixel lighting)
     ctx->PSSetConstantBuffers(0, 2, pcb);
