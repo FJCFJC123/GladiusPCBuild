@@ -77,11 +77,7 @@ float4 ps(V i) : SV_Target
         float4 clip = float4(ndc * w, P.z * -w + P.w, w);          // z from P row 2 with view z = -w
         float4 pc = float4(dot(reproj[0], clip), dot(reproj[1], clip), dot(reproj[2], clip), dot(reproj[3], clip));
         if (pc.w > 1e-4) prev_uv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
-    } else {                                            // sky: direction only (w -> infinity)
-        float4 clip = float4(ndc, -P.z, 1);
-        float4 pc = float4(dot(reproj[0], clip), dot(reproj[1], clip), dot(reproj[2], clip), dot(reproj[3], clip));
-        if (pc.w > 1e-6) prev_uv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
-    }
+    }                                                   // neither: flat 2D drawn before the 3D - it stays in place
     if (any(prev_uv < 0) || any(prev_uv > 1)) return c;
     float3 h = hist.SampleLevel(lin, prev_uv, 0).rgb;
     float3 hy = ycocg(h * wt(h)), hq = clamp(hy, mn, mx);

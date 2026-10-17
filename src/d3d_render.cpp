@@ -317,8 +317,10 @@ static void apply_state(bool pretransformed)
         !pretransformed && !rt.BlendEnable && g_nv[NV_DEPTH_MASK / 4] && g_nv[NV_DEPTH_TEST_ENABLE / 4] && rt.RenderTargetWriteMask
             ? D3D11_COLOR_WRITE_ENABLE_RED : 0;
     bd.RenderTarget[2].RenderTargetWriteMask = bd.RenderTarget[1].RenderTargetWriteMask ? D3D11_COLOR_WRITE_ENABLE_ALL : 0;
-    bd.RenderTarget[3].RenderTargetWriteMask =          // motion vectors: the same opaque draws
-        bd.RenderTarget[1].RenderTargetWriteMask ? D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN : 0;
+    // motion vectors: every opaque program draw, depth written or not (sky domes, flat engine-drawn 2D: their own
+    // motion, zero for a static panel) - only blended draws leave the pixel's motion to what is under them
+    bd.RenderTarget[3].RenderTargetWriteMask = !pretransformed && !rt.BlendEnable && rt.RenderTargetWriteMask
+                                                   ? D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN : 0;
     DWORD bc = g_nv[NV_BLEND_COLOR / 4];
     float factor[4] = {((bc >> 16) & 255) / 255.f, ((bc >> 8) & 255) / 255.f, (bc & 255) / 255.f, (bc >> 24) / 255.f};
     if (!g_bound.blend || memcmp(&bd, &g_bound.bd, sizeof bd) || memcmp(factor, g_bound.factor, sizeof factor)) {
