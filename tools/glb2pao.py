@@ -53,10 +53,9 @@ def axis_rotation(args):
 
 
 def level_rotation(meshes, trust_up=False):
-    """--level (after --up / --rot): the floor's normal = the area-weighted mean of the faces pointing up (within 60
-    degrees, then refined within 30 of that); a large wall (the most face area in one direction, not the floor) is
-    stood exactly upright; the result is turned to +z. Scans are often exported tilted - Sketchfab levels them in its
-    viewer, not in the file."""
+    """--level (after --up / --rot): the floor normal = the area-weighted mean of the faces pointing up (within 60,
+    then 30 degrees); the largest wall is stood exactly upright; the result is turned to +z. Scans are often
+    exported tilted."""
     faces = []
     for m in meshes:
         V = m['verts']
@@ -65,8 +64,7 @@ def level_rotation(meshes, trust_up=False):
             e1 = [pb[i] - pa[i] for i in range(3)]
             e2 = [pc[i] - pa[i] for i in range(3)]
             faces.append((e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]))
-    # which way is up: the side (z up or z down) with more face area within 60 degrees of it. Scans only have the
-    # surfaces the cameras saw - from above - so an upside-down export shows its ground facing down.
+    # which way is up: the side (z up or down) with more face area within 60 degrees of it (scans only see from above)
     area = lambda f: math.sqrt(f[0] ** 2 + f[1] ** 2 + f[2] ** 2)
     def refine(n, limits, either_side=False):           # area-weighted mean of the faces within each cone of n
         for limit in limits:
@@ -99,8 +97,7 @@ def level_rotation(meshes, trust_up=False):
     n = refine(n, (0.5, 0.866))
     if n is None:
         return None
-    # the largest flat surface: a building scan's main wall stands it upright exactly (the ground of a ruin is mixed
-    # with grass banks and rubble; its walls are planes). Seed = the 30-degree direction bin with the most area.
+    # the largest flat surface (a building's main wall) is stood exactly upright; seed = the 30-degree bin with most area
     bins = {}
     for f in faces:
         ln = area(f)
@@ -285,8 +282,7 @@ def main():
     for m in meshes:
         m['verts'] = [((v[0][0] - c[0], v[0][1] - c[1], v[0][2] - c[2]),) + tuple(v[1:]) for v in m['verts']]
     if args.spin:
-        # last: a pure turn about the vertical through the scene centre (--at) - squares the scene to the battle grid
-        # without touching the levelling / tilt; the floor and heights stay as they are
+        # last: a pure turn about the vertical through the scene centre (--at), squaring the scene to the battle grid
         R = [[math.cos(math.radians(args.spin)), -math.sin(math.radians(args.spin)), 0],
              [math.sin(math.radians(args.spin)), math.cos(math.radians(args.spin)), 0], [0, 0, 1]]
         for m in meshes:
@@ -297,7 +293,7 @@ def main():
     if args.manual:
         k = fit / max(ghi[0] - glo[0], ghi[1] - glo[1]) if fit else 1.0
         ax, ay = (float(v) for v in args.at.split(','))
-        # the scene's floor = the median height of its level faces (the paving), else a low percentile of its heights
+        # the scene's floor = the median height of its level faces, else a low percentile of its heights
         fz = floor_height(meshes) if args.floor_pct is None else None
         if args.floor_z is not None:
             fz = args.floor_z - raw_lo_z                # scene heights start at its lowest point (without --level)
@@ -306,8 +302,8 @@ def main():
         print(f'  floor at scene height {fz:.2f} (of {ghi[2] - glo[2]:.2f}) -> z {args.ground_z}')
         az = args.ground_z - fz * k
     else:
-        # as Protius' GLB -> .pao (glbpax.cpp): uniform scale to the arena's largest extent, centred on the arena,
-        # floors matched by the 20th-percentile vertex height - so the new visuals sit on the arena's collision
+        # uniform scale to the arena's largest extent, centred on it, floors matched by the 20th-percentile vertex height,
+        # so the new visuals sit on the arena's collision
         ap_ = xrnd.level_positions(arena)
         alo = [min(p[i] for p in ap_) for i in range(3)]
         ahi = [max(p[i] for p in ap_) for i in range(3)]
@@ -322,9 +318,8 @@ def main():
         m['verts'] = [((v[0][0] * k + ax, v[0][1] * k + ay, v[0][2] * k + az),) + tuple(v[1:])
                       for v in m['verts']]
     if args.cut_above is not None:
-        # interiors: cut the roof / upper galleries off at --cut-above over the floor so the battle camera sees in.
-        # Triangles crossing the cut are CLIPPED (walls keep their lower part; new vertices interpolated along the
-        # edges, shared between neighbours), triangles wholly above it are dropped, unused vertices removed
+        # interiors: cut everything above --cut-above over the floor so the battle camera sees in (crossing triangles are
+        # clipped, the rest above dropped, unused vertices removed)
         top = (args.ground_z if args.manual else az) + args.cut_above
 
         def lerp(va, vb, t):
@@ -386,8 +381,8 @@ def main():
     nt = sum(len(m['tris']) for m in meshes)
     print(f'{args.glb}: {len(meshes)} material(s), {nv} vertices, {nt} triangles ({time.time() - t0:.1f} s)')
     if args.pms or args.grd:
-        # collision: a heightfield of the highest walkable surface (as the retail .pms - a 2-unit grid), over the
-        # scene and the arena's old collision area; points with no surface get --ground-z
+        # collision: a 2-unit heightfield of the highest walkable surface over the scene and the arena's old collision area;
+        # points with no surface get --ground-z
         import pms
         g = [v[0] for m in meshes for v in m['verts']]
         lo = [min(p[i] for p in g) for i in range(2)]
@@ -410,8 +405,7 @@ def main():
                   f'({x0}, {y0}), {holes} without a surface (z {args.ground_z}), {len(P["T"])} triangles, '
                   f'{P["nx"]}x{P["ny"]} cells')
         if args.grd:
-            # battle grid: playable where the whole cell has scanned ground and is fairly flat; MapCenter (the
-            # battle camera's centre) at the middle of the playable cells
+            # battle grid: playable where the whole cell is fairly flat scanned ground; MapCenter at the middle of the playable cells
             import grd
             ok = grd.walkable_cells(H, x0, y0, step, flat=args.grd_flat)
             cells = [[0 if ok[y][x] else 1 for x in range(32)] for y in range(32)]

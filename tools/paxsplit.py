@@ -197,8 +197,8 @@ def split(pax, ptx_data, splits):
         if t == b'XRND':
             out.append((t, xr_ver, xr_num, new_xr))
         elif t == b'TXTR':
-            # each new entry copies its source texture's entry (name 0x80, -1, saved runtime pointer, width,
-            # height, flags): zero sizes made the painted copies draw without their texture (2026-10-11)
+            # each new entry copies its source texture's entry (name, saved pointer, width, height, flags); zero sizes would draw
+            # without the texture
             entry_len = xrnd.TXTR_ENTRY                 # fixed 0x98 (the payload carries padding)
             entries = [bytes(p[k * entry_len:(k + 1) * entry_len]) for k in range(n)]
             add = bytearray()

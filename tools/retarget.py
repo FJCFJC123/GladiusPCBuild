@@ -1,7 +1,7 @@
 """Retarget a skinned GLB with its own skeleton onto a Gladius character (skeleton + animations of a retail class).
 
-    python tools/retarget.py corvus.glb bec_unpacked/data/characters/legionnaire/legionnaire.pax \
-        game/data/characters/legionnaire/legionnaire.pax --preset corvus
+    python tools/retarget.py model.glb bec_unpacked/data/characters/legionnaire/legionnaire.pax \
+        game/data/characters/legionnaire/legionnaire.pax --preset auto
 
 The Gladius animations (.pan) drive the template's bones by name: rotations on every bone, positions only on a few
 (pelvis 'zero', shoulder blades / mass, capes, weapon mounts, face) - so limbs and spine keep the lengths in the
@@ -47,8 +47,8 @@ def preset_corvus():
     dirs = {'Root_M': ('BackA_M', 'zero', 'bodyLumbar1'), 'BackA_M': ('BackB_M', 'bodyLumbar1', 'bodyLumbar2'),
             'BackB_M': ('Chest_M', 'bodyLumbar2', 'bodyThoracic'), 'Chest_M': ('Neck_M', 'bodyThoracic', 'bodyNeck'),
             'Neck_M': ('Head_M', 'bodyNeck', 'faceSkull')}
-    # joints whose only guide is an *_end joint follow their parent rigidly: end joints mark a bone's local axis,
-    # not where it points (Corvus: Head_M_end points forward, MiddleToe1_end up)
+    # joints whose only guide is an *_end joint follow their parent rigidly (end joints mark a bone's local axis, not
+    # where it points)
     follow = {'DeformationSystem': 'Root_M', 'Breast_L': 'Chest_M', 'Breast_R': 'Chest_M', 'Head_M': 'Neck_M'}
     # Gladius segments whose length comes from the model: (Gladius from, Gladius to, model from, model to)
     seg = [('zero', 'bodyLumbar1', 'Root_M', 'BackA_M'), ('bodyLumbar1', 'bodyLumbar2', 'BackA_M', 'BackB_M'),
@@ -167,8 +167,8 @@ def qmul(a, b):
 
 
 def dq_blend(w, Rs, Ts, idx, v, n):
-    """dual-quaternion skinning of the one-time re-pose: blends the joint rotations themselves, so a shoulder
-    turned 70 degrees (A-pose -> T-pose) keeps its volume - the linear blend of the transforms collapsed Anna's"""
+    """dual-quaternion skinning of the one-time re-pose: blends the joint rotations themselves, so a joint turned far
+    (A-pose -> T-pose shoulders) keeps its volume"""
     qr = mat_to_quat(Rs)                                 # per joint
     qd = 0.5 * qmul(np.concatenate([np.zeros(Ts.shape[:-1] + (1,)), Ts], -1), qr)
     br, bd = qr[idx], qd[idx]                            # (n, k, 4)
@@ -191,10 +191,8 @@ def load_rig(path, from_nodes=False):
     names = [gltf['nodes'][j].get('name', f'joint{j}') for j in skin['joints']]
     ibm = glb2char.acc(gltf, blob, skin['inverseBindMatrices']).reshape(-1, 4, 4).transpose(0, 2, 1)
     bind = np.array([np.linalg.inv(m)[:3, 3] for m in ibm])
-    # broken inverse binds (some Character Creator exports: pelvis / thighs resolve to the origin): take the rest
-    # pose from the node hierarchy instead and pose the mesh with world x inverse bind - what a glTF viewer shows
-    # Decided by retarget(): only when joints the bone map USES sit at the origin - rigs keep IK targets / platforms
-    # there on purpose (Junkrat's 3ds Max rig: the fallback bent his neck into an S and made him 20% taller)
+    # broken inverse binds (pelvis / thighs at the origin): take the rest pose from the node hierarchy instead. Only when
+    # joints the bone map uses sit at the origin - some rigs keep IK targets there on purpose.
     S = None
     at_origin = sum(1 for b in bind[1:] if np.abs(b).max() < 1e-6)
     if from_nodes:
@@ -227,8 +225,7 @@ def load_rig(path, from_nodes=False):
                 pos = np.einsum('nij,nj->ni', M[:, :3, :3], pos) + M[:, :3, 3]
                 nrm = np.einsum('nij,nj->ni', M[:, :3, :3], nrm)
                 nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
-            # the engine finds textures by NAME across every loaded .ptx (shared eyes / teeth work that way):
-            # Sketchfab's "image0" in several converted classes = one texture for all - prefix the class
+            # the engine finds textures by name across every loaded .ptx: prefix generic names ("image0") with the class
             tname = glb2pax.safe_name(os.path.splitext(tex)[0], 'tex')
             if REDUCE.get('prefix'):
                 tname = (REDUCE['prefix'] + '_' + tname)[:31]
@@ -313,19 +310,18 @@ def retarget(glb, template, preset, scale=None, roles=None):
     origin = sum(1 for n in used if n in J and J[n] > 0 and np.abs(bind[J[n]]).max() < 1e-6) >= 2
     f_ibm = fit(bind, prims)
     if origin or np.median(f_ibm) > 0.5:
-        # broken inverse binds - joints at the origin (Ancient 6) or a mesh nowhere near its joints (Mario: mesh
-        # -341..29 high, joints 2..10): the rest pose from the node hierarchy, when it fits better
+        # broken inverse binds (joints at the origin, or a mesh nowhere near its joints): use the node hierarchy's rest pose
+        # when it fits better
         n2, b2, p2 = load_rig(glb, from_nodes=True)
         if origin or np.median(fit(b2, p2)) < np.median(f_ibm):
             names, bind, prims = n2, b2, p2
-    # parts nowhere near their joints in either pose (Mario: two spare pieces parked 6 units below him)
+    # parts nowhere near their joints in either pose (spare pieces parked away from the model)
     far = [k for k, f in enumerate(fit(bind, prims)) if f > 5.0]   # cartoon heads / hands reach ~2
     if far and len(far) < len(prims):
         print(f'  left out {len(far)} part(s) far from their joints: '
               f'{sorted({prims[k]["material"] or prims[k]["texture"] for k in far})}')
         prims = [p for k, p in enumerate(prims) if k not in far]
-    # stand the model up: some exports lie along another axis (K-Girl's CAT rig, Cuphead: head along -y). Limbs were
-    # straightened bone by bone anyway, but the head / neck keep their modelled turn - and faced the floor
+    # stand the model up: some exports lie along another axis, and the head / neck keep their modelled turn
     head = next((m for m, g in P['skin'].items() if g == 'faceSkull' and m in J), None)
     if head and P['pelvis'][0] in J:
         up_m = bind[J[head]] - bind[J[P['pelvis'][0]]]
@@ -335,10 +331,8 @@ def retarget(glb, template, preset, scale=None, roles=None):
             for p in prims:
                 p['pos'], p['nrm'] = p['pos'] @ Rup.T, p['nrm'] @ Rup.T
             print(f'  model lies along {np.round(up_m / np.linalg.norm(up_m), 2)}: stood up')
-    # facing: Gladius characters face -y; a model facing +y is turned half a turn about z. Decided by the hands (a
-    # model facing -y has its left hand at +x): toe bones can point anywhere - Cuphead's IK rig has them backwards,
-    # which turned him around, crossed his legs and stood him on tiptoe. Toes only without hands (creatures).
-    # shoulders first: hands can cross in front of the chest (Sol, a statue with folded arms, came out reversed)
+    # facing: Gladius characters face -y; a model facing +y is turned about z. Decided by the shoulders, then the hands
+    # (left hand at +x when facing -y); toe bones only without hands (creatures), since IK rigs can point them anywhere.
     side = {}
     for gl in (('armShoulder_L', 'armShoulder_R'), ('armShoulderBlade_L', 'armShoulderBlade_R'),
                ('armWrist_L', 'armWrist_R')):
@@ -360,8 +354,8 @@ def retarget(glb, template, preset, scale=None, roles=None):
     bones = xchar.read_skeleton(chunks)
     B = {b['name']: i for i, b in enumerate(bones)}
     G = np.array([g[:3, 3] for g in xchar.bone_globals(bones)])
-    # bones this class does not have (the Ogre has no pinkies): skin a pinky onto the ring finger, other missing
-    # ones onto the wrist; their pose / length entries are dropped (those joints follow their ancestor)
+    # bones this class lacks (the Ogre has no pinkies): skin a pinky onto the ring finger, other missing ones onto the
+    # wrist; their pose / length entries are dropped
 
     def have(gname):
         if gname in B:
@@ -376,8 +370,8 @@ def retarget(glb, template, preset, scale=None, roles=None):
     P['skin'] = {k: tuple(have(x) for x in v) if isinstance(v, tuple) else have(v) for k, v in P['skin'].items()}
     P['dirs'] = {k: v for k, v in P['dirs'].items() if v[1] in B and (not isinstance(v[2], str) or v[2] in B)}
     P['segments'] = [sg for sg in P['segments'] if sg[0] in B and sg[1] in B]
-    # a follow whose source lost its pose entry would copy an unposed joint (the Tank's pinky tips stretched to the
-    # floor): drop it, so the joint follows its nearest posed ancestor instead
+    # a follow whose source lost its pose entry would copy an unposed joint: drop it, so the joint follows its nearest
+    # posed ancestor
     posed = set(P['dirs']) | set(P.get('orient', {}))
     changed = True
     while changed:
@@ -389,7 +383,7 @@ def retarget(glb, template, preset, scale=None, roles=None):
     P['follow'] = dict(P['follow'])
     # 1. scale
     pm, pg = P['pelvis']
-    # pelvis height over the soles, not the origin (the L4D Tank's pelvis IS the origin: 0.97 / 0)
+    # pelvis height over the soles, not the origin (some rigs have the pelvis at the origin)
     sole = min(p['pos'][:, 2].min() for p in prims)
     s = scale or G[B[pg]][2] / max(bind[J[pm]][2] - sole, 1e-9)
 
@@ -495,9 +489,8 @@ def retarget(glb, template, preset, scale=None, roles=None):
             'joints': {n: np.round(N[B[n]], 3).tolist() for n in ('zero', 'faceSkull', 'armWrist_L', 'legAnkle_L')
                        if n in B}}
     if SHAPE.get('height') and not scale:
-        # chibi models (Cuphead, K-Girl): matching the pelvis height made giants with huge heads. With the Gladius
-        # leg lengths (segments above) the pelvis stays at its height and everything over it scales with s: one
-        # more pass with s set so the top lands at the wanted height
+        # chibi models: with Gladius leg lengths the pelvis stays at its height and everything above scales with s - one
+        # more pass sets s so the top lands at the wanted height
         top = max(m['pos'][:, 2].max() for m in meshes)
         gp = G[B[pg]][2]
         if top > gp + 1e-3:
@@ -572,8 +565,8 @@ def main():
             continue
         seen.add(p['texture'])
         if not p['image']:
-            # a colour-only material (nails, straps, soles): an 8x8 swatch of its base colour - every texture the
-            # model names must be in its .ptx (a model with 11 missing ones aborted the game on leaving the world map)
+            # a colour-only material: an 8x8 swatch of its base colour (every texture the model names must be in its .ptx, or
+            # the game aborts)
             c = np.clip(np.array(p.get('color') or [1, 1, 1, 1], float), 0, 1)
             c[:3] = c[:3] ** (1 / 2.2)                  # glTF factors are linear
             tex.append((p['texture'], np.tile((c * 255).round().astype(np.uint8), (8, 8, 1))))

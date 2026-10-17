@@ -13,9 +13,7 @@ Options:
   --ground            move the model so it rests on z = 0 (props are placed by their origin)
   --center            centre the model on x = y = 0
   --flip-v            v = 1 - v
-  --color R,G,B       vertex colour for models without COLOR_0 (0..1). Usually leave it out: models
-                      without colours are lit by the scene and look right; the colour multiplies 1:1
-                      (0.4 = the retail world-map trees' baked shade, which made a textured model too dark)
+  --color R,G,B       vertex colour for models without COLOR_0 (0..1); usually left out (scene lighting looks right)
   --max-texture N     largest texture side, power of two (default 1024)
 """
 import argparse
@@ -98,8 +96,8 @@ def walk(gltf, idx, parent, out, world=None):
     if world is not None:
         world[idx] = m
     if 'mesh' in node:
-        # a skinned mesh's vertices are in the bind pose: its node transform does not apply (posed by its joints when
-        # args.pose_skins - static scenes exported with a skeleton, e.g. Sketchfab FBX: each part sits on its bone)
+        # a skinned mesh's vertices are in the bind pose: its node transform does not apply (with --pose-skins each part is
+        # placed by its joints)
         out.append((node['mesh'], m if 'skin' not in node else [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
                     node.get('skin')))
     for c in node.get('children', []):
@@ -232,9 +230,8 @@ def load_meshes(path, args):
     meshes = []
     for mi, g in groups.items():
         mat = mats[mi] if 0 <= mi < len(mats) else {}
-        # own textures get the model name as a prefix: texture names are global in the game
-        # (names are cut to 31 characters: the model-name prefix is shortened, never the material part, and a
-        # clash gets a number - else materials collapse onto one texture)
+        # own textures get the model name as a prefix (texture names are global in the game); names are cut to 31
+        # characters by shortening the prefix, and clashes get a number
         own = safe_name(str(mat.get('name') or texture_name(gltf, mat) or max(mi, 0)), str(max(mi, 0)))
         prefix = safe_name(args.model_name, 'model')[:max(4, 30 - len(own))]
         tex = args.texture or safe_name(f'{prefix}_{own}', f'{prefix}_{max(mi, 0)}')

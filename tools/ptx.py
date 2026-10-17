@@ -135,11 +135,10 @@ def encode_entry(name, img):
 
 
 def read_ptx_entries(data):
-    """.ptx bytes -> [entry] as encode_entry makes them, the stored data byte for byte (merging keeps it as it is).
-    Variants (as ProtiusBuildMerged/builder/tools/Converter-Arena-Map.py parse_ptx handles them): format codes 0x4100
-    DXT1, 0x4200 DXT3, 0x4300 DXT5 and the Xbox 0x2000 DXT1 / 0x2200 DXT5; a model with no textures of its own has an
-    empty PFHD and no NAME / NMPT; NMPT names can run together without a terminator ("a.tgab.tga") - a name ends at
-    its zero or right after ".tga"."""
+    """.ptx bytes -> [entry] as encode_entry makes them, the stored data byte for byte.
+    Variants handled: format codes 0x4100 DXT1, 0x4200 DXT3, 0x4300 DXT5 and the Xbox 0x2000 DXT1 / 0x2200 DXT5; a
+    model without textures of its own has an empty PFHD and no NAME / NMPT; NMPT names can run together without a
+    terminator ("a.tgab.tga") - a name ends at its zero or right after ".tga"."""
     chunks, o = {}, 0
     while o + 16 <= len(data):
         tag, size, ver, num = struct.unpack_from('<4sIII', data, o)

@@ -1,14 +1,11 @@
-"""Convert the retail Gladius default.xbe into a native Windows PE executable.
+"""Convert the retail Gladius default.xbe into a native Windows PE executable (no code moves, no relocations).
 
-Layout (no code moves, no relocations):
-  0x00010000  PE headers (the XBE header page is only read by XAPI/XPP/D3D, which are replaced)
-  0x00011000  .xbe   one RWX section = every XBE section at its original address (incl. .data bss)
-  PORT_VA     .port  import directory + names, TLS directory, startup stub, patch cave
+  0x00010000  PE headers
+  0x00011000  .xbe   one RWX section: every XBE section at its original address
+  PORT_VA     .port  import directory, TLS directory, startup stub, patch cave
+  after .port .rsrc  the exe icon (XBE title image), when present
 
-The XBE kernel thunk table (0x33B160, 162 slots) becomes the import address table of
-gladiusport.dll: export krnl_<Name> per slot. The DLL forwards the few kernel calls app code makes
-(critical sections) to ntdll and traps everything else, so a missed replacement is reported by name.
-The XBE TLS block (0x90 zero-fill, index variable 0x418B8C) becomes a normal PE TLS directory.
+The XBE kernel thunk table (0x33B160, 162 slots) becomes the import table of gladiusport.dll (krnl_<Name> per slot).
 Entry point = .port stub -> gladiusport!port_start(GAME_MAIN, info).
 
 Usage: python xbe2pe.py [default.xbe] [out.exe]
@@ -31,8 +28,8 @@ def align(v, a):
 
 
 def resource_section(icons, rva):
-    """.rsrc contents for the exe icon: RT_ICON 1..n (PNG images) + RT_GROUP_ICON 1, at section RVA `rva`.
-    icons = [(size, PNG bytes)] (xbeicon.icon_images). Tree: type -> id -> language (0x409) -> data entry."""
+    """.rsrc section for the exe icon at RVA `rva`: RT_ICON 1..n (PNG images) + RT_GROUP_ICON 1.
+    icons = [(size, PNG bytes)] (xbeicon.icon_images)."""
     LANG = 0x409
     group = struct.pack('<HHH', 0, 1, len(icons)) + b''.join(
         struct.pack('<BBBBHHIH', s & 0xFF, s & 0xFF, 0, 0, 1, 32, len(p), i + 1) for i, (s, p) in enumerate(icons))
@@ -123,17 +120,14 @@ def build(xbe_path, out_path, gui=False):
     # TLS directory (same index variable / zero fill as the XBE)
     tls_x = struct.unpack_from('<I', x.data, 0x12C)[0]
     _, _, tls_index, _, tls_zero, _ = struct.unpack('<6I', x.read(tls_x, 24))
-    # The Windows loader sizes each thread's TLS block from the raw template only and ignores SizeOfZeroFill:
-    # an empty template gave every thread a 0-byte block, and the game CRT's per-thread data (block+0xC..0x90)
-    # was written into neighbouring heap blocks (the _getptd / small-object heap corruption). So the XBE's zero
-    # fill becomes an explicit zero template.
+    # the Windows loader sizes TLS blocks from the raw template only (SizeOfZeroFill is ignored), so the XBE's zero
+    # fill becomes an explicit zero template (the CRT's per-thread data needs 0x90 bytes)
     pad(16)
     tls_raw = put(bytes(max(tls_zero, 16)))                         # zero-filled template, tls_zero bytes
     tls_cb = put(bytes(8))                                          # no callbacks
     tls_dir = put(struct.pack('<6I', tls_raw, tls_raw + tls_zero, tls_index, tls_cb, 0, 0))
 
-    # XBE section headers (56 bytes each, name pointers re-pointed into .port) for XGetSectionHandleA:
-    # sections are always mapped here, so a handle is just this header (+4 address, +8 size)
+    # XBE section headers (56 bytes each, names re-pointed into .port) for XGetSectionHandleA: a handle is its header
     nsec = struct.unpack_from('<I', x.data, 0x11C)[0]
     shdr_va = struct.unpack_from('<I', x.data, 0x120)[0]
     shdrs = bytearray(x.read(shdr_va, 56 * nsec))
@@ -148,8 +142,7 @@ def build(xbe_path, out_path, gui=False):
     pad(16)
     info = put(struct.pack('<12I', 0x54524F50, GAME_MAIN, CXX_INIT[0], CXX_INIT[1], C_INIT[0], C_INIT[1],
                            FPINIT_PTR, 0, RT_INIT[0], RT_INIT[1], sect_table, nsec))   # 'PORT'
-    # gladiusport.dll!port_start gets its own tiny IAT (the kernel IAT is the fixed 162-slot XBE table)
-    # second IAT: port_start + every replaced XAPI function (tools/replacements.py)
+    # second IAT for gladiusport.dll: port_start + every replaced XAPI function (replacements.py)
     from replacements import REPLACE
     port_names = [b'port_start'] + [n.encode() for a, n, argb, note in REPLACE]
     name_vas = []
@@ -258,7 +251,7 @@ def build(xbe_path, out_path, gui=False):
 
 
 if __name__ == '__main__':
-    src = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ob\Desktop\Protius\default.xbe'
+    src = sys.argv[1] if len(sys.argv) > 1 else 'default.xbe'
     dst = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), '..', 'build', 'gladius.exe')
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     build(src, dst)

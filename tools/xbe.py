@@ -1,7 +1,7 @@
 """XBE loader helpers for the Gladius PC port (retail default.xbe, XDK 5558)."""
 import struct
 
-XBE_PATH = r'C:\Users\ob\Desktop\Protius\default.xbe'
+XBE_PATH = 'default.xbe'                            # default: the current folder
 BASE = 0x10000
 KTHUNK = 0x33B160
 

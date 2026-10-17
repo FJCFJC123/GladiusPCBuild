@@ -1,12 +1,11 @@
-"""GLB characters -> retail class models + a boot school with one unit of each (settings: tools/glbchars.json, not included -
-one entry per model, see main()).
+"""GLB characters -> retail class models + a boot school with one unit of each.
 
-Each entry is retargeted (tools/retarget.py) onto its class's retail skeleton and animations and written loose over
-the class: data\\characters\\<class>\\<class>.pax / .ptx / _var01.._var04.ptx. data\\school\\curschool.tok (the
-school the game loads at boot, "CurSchool.tok") becomes Ursula + one unit per converted character, each copied from
-a unit of that class in its school\\schooltest_*.tok (so items / skills are valid) and renamed.
+Settings: tools/glbchars.json (not included; one entry per model, see main()). Each entry is retargeted
+(tools/retarget.py) onto its class's skeleton and animations and written loose over the class (data\\characters\\
+<class>\\<class>.pax / .ptx / _var01.._var04.ptx). data\\school\\curschool.tok (the boot school) becomes Ursula + one
+unit per converted character, copied from a unit of that class in its schooltest_*.tok and renamed.
 
-    python tools/glbchars.py                     (all; --only anna junkrat for some)
+    python tools/glbchars.py                     (all; --only <id> ... for some)
     python tools/glbchars.py --remove            (deletes the class overrides and the boot school)
 """
 import argparse
@@ -68,8 +67,8 @@ def unit_block(e):
         return None
     pick = re.sub(r'(CREATEUNIT:\s*)"[^"]*"\s*,\s*"[^"]*"',
                   lambda m: f'{m.group(1)}"{e["unit"]}", "{e["school_class"]}"', pick, count=1)
-    # the test schools equip developer items ("Air Test Sword Heavy") the release item list does not have - the
-    # school screen crashed on them: take the gear of a unit of the same class whose items all exist
+    # test schools equip developer items the release item list lacks (the school screen crashes on them): take the gear
+    # of a unit of the same class whose items all exist
     gear = valid_gear(e['school_class'])
     pick = re.sub(r'ITEMSCOMP:.*', lambda m: 'ITEMSCOMP:\t\t\t' + gear, pick, count=1)
     return pick.rstrip() + '\r\n\r\n'

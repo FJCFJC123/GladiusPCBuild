@@ -114,8 +114,7 @@ def automap(names, parents, positions=None, weighted=None):
     feet = {s: find(lambda b: has(b, 'foot', 'ankle') and not has(b, 'toe', 'ball', 'twist', 'ik', 'pole', 'heel'), s)
             for s in 'LR'}
     if head is None and None not in hands.values():
-        # no 'head' name (Rigify: DEF-spine.006): from where both arms branch off, follow the unsided chain up to its
-        # last joint
+        # no 'head' name (Rigify: DEF-spine.006): follow the unsided chain up from where both arms branch off
         a = [chain_up(hands['L']), chain_up(hands['R'])]
         j = next((i for i in a[0] if i in a[1]), None)
         while j is not None:
@@ -240,12 +239,11 @@ def roles_to_preset(roles):
     for a in range(len(chain_m) - 1):
         dirs[chain_m[a]] = (chain_m[a + 1], chain_g[a], chain_g[a + 1])
         seg.append((chain_g[a], chain_g[a + 1], chain_m[a], chain_m[a + 1]))
-    # the head keeps the facing it was modelled with (no turn) and sits on the Gladius skull: copying the neck's
-    # turn tipped Spartan's / Junkrat's heads to the sky, the chest's turn over-corrected Junkrat's hunch (29 -> 113
-    # degrees forward); measured from the head-weighted vertices, no turn keeps every model's own head pitch
+    # the head keeps the facing it was modelled with (no turn) and sits on the Gladius skull; copying the neck's or
+    # chest's turn tipped heads too far
     orient = {head: (None, 'faceSkull')}
     if neck:                                            # same for the neck: some models hang the whole helmet on it
-        orient[neck[0]] = (None, 'bodyNeck')            # (Spartan: every helmet vertex on Neck, tipped 58 degrees)
+        orient[neck[0]] = (None, 'bodyNeck')            # helmets skinned entirely to the neck would tip with it
     feet = []
     for s in ('L', 'R'):
         clav, up, fo, ha = r(f'clavicle_{s}'), r(f'upperarm_{s}'), r(f'forearm_{s}'), r(f'hand_{s}')

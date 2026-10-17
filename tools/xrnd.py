@@ -270,10 +270,9 @@ def build_static_pax(template, meshes, model_name, colors=None):
 # pointer list - opaque) and list B (+0x28 / +0x2C / +0x30 - drawn after A: the transparent pass, e.g. Expanse
 # Shore's seaweed / water). Entry i of a list pairs sub-mesh i with material i.
 #
-# OBBT (culling tree, walked from node 0 - OBBWalkVisibleSet in Protius): payload = the map (int16 entries, the
-# chunk's count field = its length in BYTES) followed by the nodes, 0x40 bytes each: float[12] = 3 rows of
-# (axis x, axis y, axis z, half extent along that axis) + float[3] centre, then u16 first map entry, u16 count. A map
-# entry -n descends into node n, a value >= 0 draws that sub-mesh (index in list A then list B order).
+# OBBT (culling tree, walked from node 0): payload = the map (int16 entries; the chunk's count field = its length in
+# BYTES) followed by the nodes, 0x40 bytes each: 3 rows of (axis x, y, z, half extent) + centre, then u16 first map
+# entry, u16 count. A map entry -n descends into node n; a value >= 0 draws that sub-mesh (list A then list B order).
 
 def level_positions(pao):
     """every vertex position of a .pao / .pax (all vertex buffers) -> [(x, y, z)]"""

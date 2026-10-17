@@ -1,4 +1,4 @@
-"""Minimal XDVDFS (Xbox ISO) reader: list / extract files. Usage: xiso.py image.iso [list|extract outdir]"""
+"""Minimal XDVDFS (Xbox disc image) reader. Usage: xiso.py image.iso [list | extract outdir]"""
 import struct, sys, os
 
 SECTOR = 2048

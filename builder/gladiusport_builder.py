@@ -149,8 +149,7 @@ class Builder:
         self.log("Converting default.xbe -> gladius.exe")
         exe = self.out / "gladius.exe"
         xbe2pe.build(str(self.out / "default.xbe"), str(exe), gui=not self.opt.get("console"))
-        # the level editor is the same exe under its own name (gladiusport.dll switches to editor mode by name);
-        # optional - without the option an editor from an earlier install is removed
+        # the level editor is the same exe under its own name (optional; an editor from an earlier install is removed)
         editor = self.out / "gladius_editor.exe"
         if self.opt.get("editor"):
             shutil.copyfile(exe, editor)
@@ -164,7 +163,7 @@ class Builder:
         for name in ("gladiusport.dll", "SDL2.dll"):
             shutil.copyfile(payload_file(name), self.out / name)
             self.log(f"Installed {name}")
-        # online versus: the prebuilt gladiusnet.dll (its source is kept separately); without it the game runs offline
+        # online versus: the prebuilt gladiusnet.dll; without it the game runs offline
         try:
             shutil.copyfile(payload_file("gladiusnet.dll"), self.out / "gladiusnet.dll")
             self.log("Installed gladiusnet.dll (online versus)")
@@ -191,12 +190,11 @@ class Builder:
         set_ini(ini, "game", "UnlockVersus", "1" if self.opt.get("unlock_versus", True) else "0")
         set_ini(ini, "game", "DevMenus", "1" if self.opt.get("dev_menus") else "0")
         set_ini(ini, "game", "UnlockArenas", "1")          # all 15 versus arenas (must match across netplay PCs)
-        # netplay: game memory at fixed addresses (every PC), and the host's game memory copied to everyone at
-        # session start (the host's StateSync decides; clients need Container=1 to take part)
+        # netplay: game memory at fixed addresses on every PC (needed to join a session)
         set_ini(ini, "mem", "Container", "1")
         set_ini(ini, "mem", "StateSync", "1")
-        # graphics preset: "recommended" (detected), low / medium / high, or "keep" (leave [video] as it is). Default:
-        # recommended for a new install, keep once an install has a preset (the player may have tuned it in game)
+        # graphics preset: "recommended" (detected), low / medium / high or "keep"; default: recommended for a new install,
+        # keep once the install has a preset
         preset = self.opt.get("preset") or ("keep" if self.had_preset else "recommended")
         hw = detect_hardware()
         self.log("Hardware: " + describe_hardware(hw))
@@ -221,8 +219,7 @@ class Builder:
             set_ini(net, "net", "name", self.opt["player_name"][:15])
         if self.opt.get("relay"):
             set_ini(net, "net", "relay", self.opt["relay"])
-        # netplay autotest launchers: bots play versus matches between two PCs with no human input. A release
-        # gladiusnet.dll ignores -gnauto, so none are written for it (and stale ones from a dev install are removed)
+        # netplay autotest launchers (dev gladiusnet.dll only; a release build ignores -gnauto, so stale ones are removed)
         net_dll = self.out / "gladiusnet.dll"
         release = not net_dll.exists() or b"GNBUILD=release" in net_dll.read_bytes()
         for name, mode in (("Netplay Autotest - Host.bat", "host"), ("Netplay Autotest - Join.bat", "join")):
@@ -279,10 +276,8 @@ def set_ini(path, section, key, value):
     Path(path).write_text("\n".join(lines) + "\n", encoding="latin-1")
 
 
-# ======================================================================== hardware presets
-# Graphics presets written to gladiusport.ini at install - the SAME table as src\options_video.cpp k_preset (the
-# in-game Video page "Preset" row re-applies them; any change there makes it Custom). Screen Fit / UI Aspect are
-# left alone. CPU Cores: SingleCore=0 (Multi) for now - revisit after the long 2-PC test (2026-10-10).
+# Graphics presets written to gladiusport.ini at install: the same table as src/options_video.cpp k_preset (keep
+# them equal). Screen Fit / UI Aspect are left alone; CPU Cores = Multi (SingleCore=0).
 TIERS = ("low", "medium", "high")
 PRESETS = {
     "AntiAlias": ("fxaa", "taa", "taa"), "Lighting": ("vertex", "pixel", "pixel"),

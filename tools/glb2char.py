@@ -127,8 +127,8 @@ def build_character(template, meshes, max_bones=40, skel=None, template_ptx=None
                                                    tb[xrnd.SLOT_MATERIALS], tb[xrnd.SLOT_TEXTURES],
                                                    tb[xrnd.SLOT_NAMES], stored)
     except ValueError:
-        # every material of the class binds two textures (the Scarab: colour + shine ramp): borrow the retail
-        # Legionnaire's single-texture skinned material stream (self-contained; its texture field is rewritten)
+        # classes whose materials bind two textures (the Scarab: colour + shine ramp): borrow the retail Legionnaire's
+        # single-texture skinned material stream (its texture field is rewritten)
         donor = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bec_unpacked', 'data', 'characters',
                              'legionnaire', 'legionnaire.pax')
         dch = {t: (v, n, p) for t, v, n, p in xrnd.read_chunks(open(donor, 'rb').read())}
@@ -186,7 +186,7 @@ def build_character(template, meshes, max_bones=40, skel=None, template_ptx=None
         m['_bi'], m['_wb'] = bi, wb
 
     vertices0, vertices1, indices = bytearray(), bytearray(), bytearray()
-    # vertex colours (Melina's ZBrush polypaint): the retail 32-byte skinned vertex with a colour (xchar.py)
+    # vertex colours: the retail 32-byte skinned vertex with a colour (xchar.py)
     has_col = any(m.get('col') is not None for m in meshes)
     if has_col:
         for m in meshes:

@@ -1,8 +1,7 @@
-"""XAPI functions replaced by gladiusport.dll implementations.
+"""Library functions replaced by gladiusport.dll, and in-place byte patches, applied by xbe2pe.py.
 
-Each entry: (xbe_address, export_name, stack_arg_bytes, note).  xbe2pe.py writes `jmp [slot]` at the
-address (the original code is never reached); the DLL export has the same calling convention (stdcall,
-arg bytes as listed) and Win32 semantics. Names are verified from the code before an entry is added.
+REPLACE entries: (xbe_address, export_name, stack_arg_bytes, note). xbe2pe.py writes a jmp to the DLL export at the
+address; the export has the same calling convention and Win32 semantics.
 """
 REPLACE = [
     # --- heap (CRT malloc/free/realloc/_msize land here; Xbox XAPI carries its own NT Rtl heap)
@@ -15,7 +14,7 @@ REPLACE = [
     (0x16CB3A, 'xapi_RtlSizeHeap',       12, 'called by CRT _msize / XAPI HeapSize 0x16BCDA'),
     (0x16E888, 'xapi_RtlReAllocateHeap', 16, 'called by CRT realloc 0x2752EC'),
 
-    # --- threads, synchronization, last error, time (Windows handles end-to-end: whole family replaced)
+    # --- threads, synchronization, last error, time
     (0x16893B, 'xapi_CreateEventA',             16, 'XbSymbolDatabase'),
     (0x16899C, 'xapi_OpenEventA',               12, 'XbSymbolDatabase'),
     (0x1689F8, 'xapi_SetEvent',                  4, 'XbSymbolDatabase'),
@@ -137,15 +136,12 @@ REPLACE = [
     (0x1D5D10, 'port_engine_halt',                0, 'engine halt `jmp $` (CRI error callback): logs the reason'),
 ]
 
-# In-place byte patches: (xbe_address, expected_hex, new_hex, note).  'FAKE_KTHREAD' in new_hex is replaced
-# by the little-endian address of a .port block that stands in for the Xbox KTHREAD (+0x28 TlsData != 0).
+# In-place byte patches: (xbe_address, expected_hex, new_hex, note). 'FAKE_KTHREAD' in new_hex becomes the address of
+# a .port block standing in for the Xbox KTHREAD (+0x28 TlsData != 0).
 FS_TLS_ARRAY = [0x277883, 0x2779CD, 0x277A2A, 0x282034, 0x285B73, 0x285B90]
 
-# 720p game resolution (default.xbe -> default720P.XBE bindiff, Codex work 2026-10-08): engine / CRI immediates and
-# engine-read data, 640x480 -> 1280x720. OFF by default: the menus / HUD are laid out in fixed 640x480 coordinates
-# (the reference XBE does not scale them either - its one 2D edit, 0x38B02, sets a single screen's height to 227.0),
-# so with these on the UI sits in the top-left of a 1280x720 frame. Widescreen needs the 2D layer remapped by the
-# renderer first. Set GLADIUS_720P=1 in the environment when generating gladius.exe to include them.
+# Fixed 720p patches (640x480 -> 1280x720), off unless GLADIUS_720P=1 when generating gladius.exe. Superseded by
+# [video] Resolution (src/game_resolution.cpp), which patches the same sites at startup with any size.
 ENABLE_720P = __import__('os').environ.get('GLADIUS_720P') == '1'
 HD_720P_PATCHES = [
     (0x6DC7C, 'e001', 'd002', '720p: startup init height 480 -> 720'),
@@ -166,10 +162,8 @@ HD_720P_PATCHES = [
     (0x1D6CA3, '8002', '0005', '720p: texture lock/create width 640 -> 1280'),
     (0x21B77B, '8002', '0005', '720p: CRI/video fallback width 640 -> 1280'),
     (0x21B785, 'e001', 'd002', '720p: CRI/video fallback height 480 -> 720'),
-    # default720PFIX.XBE (G:\...\Gladius720P) has 4 more edits than default720P.XBE - the ones that make 2D fill the frame:
-    # D3D_SetViewportConstants(0, 0, 640.0f, 480.0f, 0, 1.0f) at 0x1CD3FF..0x1CD417 (the viewport the UI shader's
-    # c93 / c95 scale+offset come from - it kept resetting the 2D mapping to 640x480) -> 1280.0f x 728.0f (FIX's
-    # value; 728 not 720, kept as-is), and a 2D centering (640 - w) / 2, (480 - h) / 2 at 0x1D5D67 / 0x1D5D83.
+    # four more edits that make the 2D layer fill the frame: D3D_SetViewportConstants floats (480.0 -> 728.0 kept as
+    # the reference patch had it) and the 2D centering at 0x1D5D67 / 0x1D5D83
     (0x1CD409, 'f043', '3644', '720p FIX: viewport-constant height 480.0f -> 728.0f'),
     (0x1CD40E, '2044', 'a044', '720p FIX: viewport-constant width 640.0f -> 1280.0f'),
     (0x1D5D68, '8002', '0005', '720p FIX: 2D centering width 640 -> 1280'),
@@ -193,17 +187,15 @@ PATCHES = (
      for a in (0x27782C, 0x27785C, 0x2779A7, 0x285DDA)] +
     [(a, '64a128000000', 'b8FAKE_KTHREAD90', 'CRT _getptd: KeGetCurrentThread()->TlsData check')
      for a in (0x277872, 0x2779BC)] +
-    # save icon (dashboard thumbnail): D3DX resample of a screen texture + XGWriteSurfaceOrTextureToXPR; the
-    # native D3DX path reads real D3D device state. Optional on Xbox too (returns 0 = no image), skipped on PC.
+    # save icon (dashboard thumbnail) needs D3DX on real D3D state: skipped (returns 0 = no image, allowed on Xbox too)
     [(0x272C60, '81ec24010000', '31c0c20800' + '90', 'save icon writer -> return 0 (no image)')] +
-    # CRI idle-time meter: "begin wait" (0x211470) boosts the caller to 15 and resumes a priority-2 thread that
-    # spins counting idle cycles until "end wait" (0x2114B0) suspends it. Statistic only; on PC the spinner holds
-    # the CRI lock (priority > 0 exclusion) and never blocks -> deadlock. Keep the nesting count, skip the rest.
+    # CRI idle-time meter: a spinning priority-2 thread that would hold the CRI lock forever on PC. Keep the nesting
+    # count, skip the rest.
     [(0x211470, 'a13092520085c0', 'ff053092520' + '0c3', 'CRI idle meter begin -> inc nesting; ret'),
      (0x2114B0, 'ff0d3092520075', 'ff0d3092520' + '0c3', 'CRI idle meter end -> dec nesting; ret')]
 )
 
-# --- Xbox D3D8 -> D3D11 shim (tools/d3d_table.py): every D3D8 entry the game calls
+# --- Xbox D3D8 -> D3D11 shim (tools/d3d_table.py)
 from d3d_table import entries as _d3d_entries, dsound_entries as _dsound_entries
 D3D_FASTCALL = {}                    # export name -> decorated arg bytes (MSVC @name@N)
 for _a, _n, _conv, _ns, _regs in _d3d_entries():
@@ -211,6 +203,6 @@ for _a, _n, _conv, _ns, _regs in _d3d_entries():
     if _conv == 'fastcall':
         D3D_FASTCALL['d3d_' + _n] = 8 + 4 * _ns
 
-# --- Xbox DirectSound -> PC audio (R0: silent mixer, src/dsound_*.cpp)
+# --- Xbox DirectSound -> software mixer (src/dsound_*.cpp)
 for _a, _n, _conv, _ns, _regs in _dsound_entries():
     REPLACE.append((_a, 'dsound_' + _n, 4 * _ns, _conv))

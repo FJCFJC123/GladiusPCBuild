@@ -226,8 +226,7 @@ def clear_box(bl, hdr, box, meshes=None):
         k = (ix, iy)
         if k not in fp['zlo']:
             return False
-        # a covered cell: whatever is at or above the part's lowest surface there would show through it or poke out
-        # of it; what lies below stays (hidden under the part)
+        # a covered cell: anything at or above the part's lowest surface there would show through it; what lies below stays
         return L[2] >= fp['zlo'][k] - fp['pad']
 
     import paxsplit
@@ -255,8 +254,7 @@ def clear_box(bl, hdr, box, meshes=None):
             touched.append(inbox)
         if not any(touched):
             continue
-        # a buffer without room for the cuts (the world map's first one is nearly full): the sub-mesh moves into a
-        # vertex buffer of its own first - its vertices copied, its indices remapped (as retail splits big levels)
+        # a buffer without room for the cuts: the sub-mesh first moves into a vertex buffer of its own
         need = sum(touched) * (48 if fp else 8)
         if len(vbs[vb][1]) // st + need > 0xFFFF:
             used = sorted({i for t in tris for i in t})
@@ -335,8 +333,8 @@ def clear_box(bl, hdr, box, meshes=None):
                 if not kept:
                     removed += 1
             changed = True
-            # vertex budget: a cut point shared by neighbouring pieces is stored once (cache); a face whose pieces would
-            # not fit in the buffer any more is handled whole - dropped if the part covers its centre, else kept
+            # vertex budget: shared cut points are stored once; a face that no longer fits is handled whole (dropped if the part
+            # covers its centre, else kept)
             fresh = {q[1] for pl in kept for q in pl if q[0] is None and q[1] not in cache}
             if len(vbs[vb][1]) // st + len(fresh) > 0xFFFF:
                 if fp and drop_piece([(i, None) for i in t], vert):
@@ -410,8 +408,8 @@ def merge(pax, ptx_data, meshes, textures, tag, box=None):
     mats_b = [u32(matptrs, moff_b + 4 * k) for k in range(cnt_b)]
     first_sub, first_mat = (list_a or list_b)[0], (mats_a or mats_b)[0]
 
-    # the new vertex buffer takes the layout of the buffer the copied material draws (its op 0x09 format must
-    # match): 24 position, normal, UV / 28 + colour / 36 + colour + a second UV (levels: the world maps)
+    # the new vertex buffer takes the layout of the buffer the copied material draws: 24 position, normal, UV / 28 +
+    # colour / 36 + colour + second UV
     t_vbe = u32(bl[SLOT_SUBMESH], first_sub + 4)
     vbent0 = bl[SLOT_VBENT][t_vbe:t_vbe + 0x14]
     stride = u32(vbent0, 0x10)
@@ -446,9 +444,8 @@ def merge(pax, ptx_data, meshes, textures, tag, box=None):
         tex_off[name] = len(bl[SLOT_TEXTURES])
         bl[SLOT_TEXTURES] += to
 
-    # pieces: each material's triangles cut so a piece references at most MAX_VB vertices (16-bit indices), then
-    # packed into vertex buffers of at most MAX_VB vertices - one sub-mesh per piece (as tools/xrnd.py
-    # build_level_pao does for whole levels)
+    # pieces: each material's triangles cut so a piece uses at most MAX_VB vertices (16-bit indices), packed into vertex
+    # buffers of at most MAX_VB - one sub-mesh per piece
     MAX_VB = 0xFFFF
     pieces = []                                          # (mesh, verts, tris local to verts)
     for m in meshes:
@@ -657,9 +654,7 @@ def main():
     out = args.out or args.pax
     base = os.path.splitext(os.path.basename(out))[0]
     tag = glb2pax.safe_name(os.path.splitext(os.path.basename(args.glb))[0], 'part')[:20]
-    # orientation first, then size and placement in the corrected frame - the same steps as tools/glb2pao.py
-    # (scans such as Sketchfab's carry an arbitrary up and junk below the ground: centring / grounding before the
-    # turn put the forum well off the clicked spot)
+    # orientation first, then size and placement in the corrected frame (same steps as tools/glb2pao.py)
     import glb2pao
     ga = types.SimpleNamespace(scale=1.0, fit=None, ground=False, center=False, flip_v=args.flip_v, color=None,
                                texture=None, model_name=glb2pax.safe_name(f'{base}_{tag}', 'part')[:24],
