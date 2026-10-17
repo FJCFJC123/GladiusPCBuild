@@ -215,6 +215,17 @@ class Builder:
                            "Enabled=0\n; level range of every simulated gladiator (1-30)\nLevelMin=12\nLevelMax=18\n"
                            "; optional comma list of schools (names from data\\units\\unitschools.idx); empty = all 95\n"
                            "Schools=\n", encoding="ascii")
+        # HD texture pack: a folder of <texture name>.png (empty = leave the install's setting as it is)
+        pack = (self.opt.get("texture_pack") or "").strip()
+        if pack:
+            folder = Path(pack).resolve()
+            if not folder.is_dir():
+                raise RuntimeError(f"HD texture pack folder not found: {folder}")
+            pngs = sum(1 for _ in folder.glob("*.png"))
+            if not pngs:
+                raise RuntimeError(f"No .png textures in {folder} - choose the folder that holds the pack's images")
+            set_ini(ini, "textures", "Pack", str(folder))
+            self.log(f"HD texture pack: {folder} ({pngs} textures; F4 in game toggles it)")
         if self.opt.get("player_name"):
             set_ini(net, "net", "name", self.opt["player_name"][:15])
         if self.opt.get("relay"):
@@ -409,6 +420,7 @@ def cli(argv):
     ap.add_argument("--no-unlock-versus", action="store_true", help="Versus only after story progress (retail)")
     ap.add_argument("--console", action="store_true", help="Keep a console window next to the game")
     ap.add_argument("--editor", action="store_true", help="Also install gladius_editor.exe (level editor)")
+    ap.add_argument("--texture-pack", help="HD texture pack folder (<texture name>.png files)")
     ap.add_argument("--name", help="Player name for online versus")
     ap.add_argument("--relay", help=f"Online relay host:port (default {DEFAULT_RELAY})")
     ap.add_argument("--force-extract", action="store_true", help="Re-extract disc files that already exist")
@@ -435,7 +447,8 @@ def cli(argv):
             print(f"  [{label}] {pct * 10}%", flush=True)
 
     opts = {"dev_menus": not a.no_dev_menus, "unlock_versus": not a.no_unlock_versus, "console": a.console,
-            "editor": a.editor, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset}
+            "editor": a.editor, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset,
+            "texture_pack": a.texture_pack}
     Builder(a.source, a.out, opts, progress=progress).run(update=a.update)
 
 
@@ -465,6 +478,7 @@ def gui():
     v_edit = tk.BooleanVar(value=settings.get("editor", False))
     v_name = tk.StringVar(value=settings.get("player_name", socket.gethostname()[:15]))
     v_relay = tk.StringVar(value=settings.get("relay", DEFAULT_RELAY))
+    v_pack = tk.StringVar(value=settings.get("texture_pack", ""))
     hw = detect_hardware()
     preset_choices = {"Automatic (new install: recommended, else keep)": None,
                       f"Recommended for this PC ({hw['tier'].capitalize()})": "recommended",
@@ -486,6 +500,11 @@ def gui():
         p = filedialog.askdirectory(title="Extracted Gladius disc folder (with default.xbe)")
         if p:
             v_src.set(p)
+
+    def pick_pack():
+        p = filedialog.askdirectory(title="HD texture pack folder (<texture name>.png files)")
+        if p:
+            v_pack.set(os.path.normpath(p))
 
     def pick_out():
         p = filedialog.askdirectory(title="Install folder")
@@ -522,6 +541,14 @@ def gui():
         row=6, column=1, sticky="w", padx=6, pady=(6, 0))
     ttk.Label(box, text="Detected: " + describe_hardware(hw), foreground="#555").grid(
         row=7, column=0, columnspan=2, sticky="w")
+    ttk.Label(box, text="HD texture pack").grid(row=8, column=0, sticky="w", pady=(6, 0))
+    fpack = ttk.Frame(box)
+    fpack.grid(row=8, column=1, sticky="ew", padx=6, pady=(6, 0))
+    fpack.columnconfigure(0, weight=1)
+    ttk.Entry(fpack, textvariable=v_pack).grid(row=0, column=0, sticky="ew")
+    ttk.Button(fpack, text="Browse...", command=pick_pack).grid(row=0, column=1, padx=(4, 0))
+    ttk.Label(box, text="Optional: folder of upscaled <texture name>.png files. Empty = keep the current setting.",
+              foreground="#555").grid(row=9, column=0, columnspan=2, sticky="w")
 
     bar = ttk.Progressbar(frm, maximum=1000)
     bar.grid(row=5, column=0, columnspan=3, sticky="ew")
@@ -566,7 +593,7 @@ def gui():
     def opts():
         return {"dev_menus": v_dev.get(), "unlock_versus": v_vs.get(), "console": v_con.get(),
                 "editor": v_edit.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
-                "preset": preset_choices.get(v_preset.get())}
+                "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip()}
 
     def save():
         s = {"source": v_src.get(), "out": v_out.get(), **opts()}
