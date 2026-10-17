@@ -42,7 +42,7 @@ static float g_strength = 0.55f, g_distance = 100.0f, g_min_elev = 50.0f;
 static UINT g_size = 4096;
 static int g_show;
 static float g_sun[3];                                  // light travel direction, view space (this frame)
-static float g_up[3] = {0, 1, 0};                       // world up, view space (from a lit object's axes)
+static float g_up[3] = {0, 1, 0};                       // world up, view space (world z through the camera)
 static float g_sun_obj[3], g_sun_wvp[16];               // brightest light: direction in its draw's input space + WVP
 static float g_prevLP[16];                              // last frame's view -> light clip (L * P^-1)
 static float g_prevP[16], g_prevD[3];                   // last frame's projection and sun (view space, travel)
@@ -796,6 +796,24 @@ void d3d_shadow_apply()
         dir_xform(R, g_up_world, g_up);
     } else {
         return;                                         // no sun known yet
+    }
+    // World up straight from the camera: Gladius' world is z-up. The guess from the lit draw (its axis nearest screen
+    // up) picks a horizontal axis once the camera looks down past ~45 degrees, which tilted the sun and turned the map.
+    if (have_r) {
+        const float z_up[3] = {0, 0, 1};
+        float up[3];
+        dir_xform(R, z_up, up);
+        if (up[1] > -0.2f) {                            // the battle camera never rolls over: world up shows screen-up
+            static int logs;                            // [diagnostic] frames where the old guess disagreed
+            float agree = up[0] * g_up[0] + up[1] * g_up[1] + up[2] * g_up[2];
+            if (agree < 0.9f && logs < 20) {
+                logs++;
+                port_log("shadow: frame %u world up %.2f %.2f %.2f, lit-draw guess was %.2f %.2f %.2f\n", g_d3d.frame,
+                         up[0], up[1], up[2], g_up[0], g_up[1], g_up[2]);
+            }
+            memcpy(g_up, up, sizeof up);
+            memcpy(g_up_world, z_up, sizeof z_up);
+        }
     }
     {   // [diagnostic] Stadium Dreas canopy casters per frame, logged when the set changes
         static UINT last_ck = 0xFFFFFFFF, last_bk;
