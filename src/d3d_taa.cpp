@@ -35,8 +35,7 @@ cbuffer TaaCB : register(b0) {
     float4 reproj[4];   // current clip (x, y from uv, z / w from view depth) -> last frame's clip
     float4 P;           // current projection: P00, P11, P[2][2]... packed: x = P00, y = P11, z = P22, w = P23
     float4 info;        // 1/w, 1/h, history valid, -
-    float4 jit;         // this frame's jitter (NDC); z = 1: the 3D is a sub-screen box (vbox)
-    float4 vbox;        // that box: left, top, right, bottom (uv)
+    float4 jit;         // this frame's jitter (NDC)
 };
 struct V { float4 p : SV_Position; float2 uv : TEXCOORD0; };
 V vs(uint id : SV_VertexID)
@@ -66,19 +65,13 @@ float4 ps(V i) : SV_Target
     if (info.z < 0.5) return c;
     // reprojection: this pixel's point (G-buffer view depth; |w|, lit draws store it negative) in last frame's clip
     float w = abs(gdepth.Load(int3(i.uv / info.xy, 0)));
-    // the 3D viewport in uv: the whole screen, or a sub-screen box (character previews: outside it and behind the model
-    // the screen is static 2D, never reprojected)
-    bool boxed = jit.z > 0.5;
-    float2 b0 = boxed ? vbox.xy : float2(0, 0), bs = boxed ? vbox.zw - vbox.xy : float2(1, 1);
-    float2 buv = (i.uv - b0) / bs;
     // the pixel centre, not the jittered sample: history is looked up where this output pixel was last frame
-    float2 ndc = float2(buv.x * 2 - 1, 1 - buv.y * 2);
+    float2 ndc = float2(i.uv.x * 2 - 1, 1 - i.uv.y * 2);
     float2 prev_uv = i.uv;
-    if (boxed && (any(buv < 0) || any(buv > 1) || w <= 0 || w >= 60000)) {
-    } else if (w > 0 && w < 60000) {
+    if (w > 0 && w < 60000) {
         float4 clip = float4(ndc * w, P.z * -w + P.w, w);          // z from P row 2 with view z = -w
         float4 pc = float4(dot(reproj[0], clip), dot(reproj[1], clip), dot(reproj[2], clip), dot(reproj[3], clip));
-        if (pc.w > 1e-4) prev_uv = b0 + float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5) * bs;
+        if (pc.w > 1e-4) prev_uv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
     } else {                                            // sky: direction only (w -> infinity)
         float4 clip = float4(ndc, -P.z, 1);
         float4 pc = float4(dot(reproj[0], clip), dot(reproj[1], clip), dot(reproj[2], clip), dot(reproj[3], clip));
@@ -145,7 +138,7 @@ static bool init()
     dev->CreatePixelShader(p->GetBufferPointer(), p->GetBufferSize(), nullptr, &g_ps);
     v->Release(), p->Release();
     D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = 8 * 16;
+    bd.ByteWidth = 7 * 16;
     bd.Usage = D3D11_USAGE_DEFAULT;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     dev->CreateBuffer(&bd, nullptr, &g_cb);
@@ -178,10 +171,15 @@ static float halton(int i, int b)
     return r;
 }
 
+// A 3D box on a 2D screen (the school / shop character previews, game_resolution.cpp): its model spins, which the
+// camera-only reprojection cannot follow, so TAA steps aside there - no jitter, no history.
+extern DWORD g_sub_viewport_frame;
+static bool preview_frame() { return g_d3d.frame - g_sub_viewport_frame <= 1; }
+
 // Present: pick the next frame's jitter (only when this frame had 3D, so menus stay still).
 void d3d_taa_frame_begin()
 {
-    bool on = g_d3d.anti_alias == 2 && g_had_3d && !g_failed;
+    bool on = g_d3d.anti_alias == 2 && g_had_3d && !g_failed && !preview_frame();
     if (!on && g_hist_valid && g_d3d.anti_alias != 2)
         g_hist_valid = false;
     g_had_3d = false;
@@ -215,6 +213,10 @@ static void resolve()
 {
     g_pending = false;
     g_resolved = true;
+    if (preview_frame()) {
+        g_hist_valid = false;
+        return;
+    }
     if (!g_d3d.scene_tex || !g_d3d.gbuf_srv || !init() || !targets())
         return;
     prof_gpu_pass(GP_TAA);
@@ -234,17 +236,11 @@ static void resolve()
                                         g_prevVP[r * 4 + 2] * VPi[8 + c] + g_prevVP[r * 4 + 3] * VPi[12 + c];
     }
     ID3D11DeviceContext *ctx = g_d3d.ctx;
-    float cb[32] = {};
+    float cb[28] = {};
     memcpy(cb, reproj, 64);
     cb[16] = cam ? P[0] : 1, cb[17] = cam ? P[5] : 1, cb[18] = cam ? P[10] : 0, cb[19] = cam ? P[11] : 0;
     cb[20] = 1.0f / g_w, cb[21] = 1.0f / g_h, cb[22] = hist_ok ? 1.0f : 0.0f;
     cb[24] = g_jitter[0], cb[25] = g_jitter[1];
-    extern float g_sub_viewport[4];                     // game_resolution.cpp: this frame's sub-screen 3D box
-    extern DWORD g_sub_viewport_frame;
-    if (g_sub_viewport_frame == g_d3d.frame) {
-        cb[26] = 1;
-        memcpy(&cb[28], g_sub_viewport, sizeof g_sub_viewport);
-    }
     ctx->UpdateSubresource(g_cb, 0, nullptr, cb, 0, 0);
     int out = g_cur ^ 1;
     ID3D11ShaderResourceView *none[3] = {};

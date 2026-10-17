@@ -167,9 +167,8 @@ static void install_camera_apply()
 }
 
 // gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels, y from the bottom): a sub-screen viewport (the 3D
-// character previews of the school / shop screens) is noted for TAA - outside the box, and its empty background,
-// the screen is static 2D, not sky - and each distinct one is logged once.
-float g_sub_viewport[4];                                // left, top, right, bottom as 0..1 of the screen
+// character previews of the school / shop screens) is noted for TAA (d3d_taa.cpp: no TAA on those frames) and each
+// distinct one is logged once.
 DWORD g_sub_viewport_frame = 0xFFFFFFFF;                // d3d frame it was set in
 static void __cdecl note_viewport(const int *a)
 {
@@ -177,8 +176,6 @@ static void __cdecl note_viewport(const int *a)
     int w = *(const int *)0x37FD38, h = *(const int *)0x37FD3C;
     if (w <= 0 || h <= 0 || (a[0] == 0 && a[1] == 0 && a[2] == w && a[3] == h))
         return;
-    g_sub_viewport[0] = (float)a[0] / w, g_sub_viewport[2] = (float)(a[0] + a[2]) / w;
-    g_sub_viewport[1] = (float)(h - a[1] - a[3]) / h, g_sub_viewport[3] = (float)(h - a[1]) / h;
     g_sub_viewport_frame = g_d3d.frame;
     if (n >= 16)
         return;
