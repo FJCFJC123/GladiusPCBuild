@@ -38,7 +38,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 - **Controllers**: Xbox, PlayStation, Switch Pro and more through SDL2, plus keyboard support.
 - **Quality of life**: in-game Video options, 27 save slots, Quit Game in the main menu, all versus arenas.
 - **Online versus** over the internet or LAN: encrypted, relay-hosted, with match codes.
-- **Level editor** (optional): edit levels live inside the running game. See [below](#level-editor).
+- **Level editor** (optional): reshape levels, merge in GLB models, and edit collision, the battle grid and props, live
+  inside the running game. See [below](#level-editor).
 
 ---
 
@@ -57,13 +58,18 @@ main menu, then **Host** or **Join**. Both players need the same GladiusPort ver
 ## Level editor
 
 Tick **Level editor** in the builder to also install `gladius_editor.exe`: the game with an editor window
-alongside it. You edit the level you're standing in, and the result appears immediately.
+alongside it. Walk the world map or start an arena battle, edit the place you're in, and see the result
+immediately.
 
-- **Props:** place, move, rotate, duplicate and delete them, set their properties, and drag them in the game
-  window.
-- **Meshes:** sculpt, smooth, cut and recolour prop models and level terrain; paint textures; import GLB models.
-- **Collision:** raise, lower, flatten and switch off floor collision; paint surface types.
-- **Battle grid:** paint movement, line-of-sight and start-position layers in an arena.
+- **Level geometry:** sculpt, smooth, cut, move and recolour the level's own terrain and buildings, and paint its
+  textures. Culling is refitted automatically on save.
+- **GLB merging:** merge any glTF model (a Blender asset, a store download or a photogrammetry scan) into the
+  level's mesh. A live ghost preview shows overlaps and buried edges, with optional cut-away of the faces the new
+  model replaces.
+- **Floor collision:** raise, lower, flatten, smooth or switch off the walkable floor, and paint surface types
+  such as roads, search spots and NPC spawn areas.
+- **Battle grid:** paint movement, line-of-sight, teleport and start-position layers cell by cell in an arena.
+- **Props:** place, drag, rotate, duplicate and delete level objects, and edit their meshes.
 - **Safe storage:** edits save as loose files in `data\`, never touching `gladius.bec`, and a level can be reset to
   the original at any time.
 
