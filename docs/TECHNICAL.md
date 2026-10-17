@@ -35,8 +35,12 @@ retail default.xbe ──► tools/xbe2pe.py ──► gladius.exe   (original x
 
 The Xbox runs ordinary 32-bit x86 code, so the game's own code can run on a PC as it is. What can't run is
 everything around it: the Xbox kernel, the XAPI system library, Direct3D 8 for the NV2A GPU, DirectSound for the
-MCPX audio chip and the controller libraries. GladiusPort keeps the game code and swaps out all of those. Nothing
-is emulated: there is no CPU interpreter, no GPU emulation and no kernel emulation.
+MCPX audio chip and the controller libraries. GladiusPort keeps the game code and swaps out all of those.
+
+There is no CPU emulation: the game's instructions run natively. The system libraries are reimplemented at their
+API level, which is often called high-level emulation (HLE). The GPU, audio chip and kernel are never modelled at
+the hardware level. The closest the port comes is the renderer, which decodes the NV2A commands the engine writes
+into its push buffer and maps them onto Direct3D 11 state.
 
 ---
 
@@ -272,7 +276,8 @@ These are small hooks into the game's own screens and systems.
 - **Online versus** in `netplay/gladiusnet.dll`. It runs on a deterministic mode in `gladiusport.dll`: fixed
   frame time, fixed AI iterations and finished reads before each frame. Every machine runs the same frames from
   the same inputs.
-- **Level editor** (optional, `gladius_editor.exe`): live prop, mesh, collision and battle-grid editing.
+- **Level editor** (optional, `gladius_editor.exe`): live prop, mesh, collision and battle-grid editing. See
+  [EDITOR.md](EDITOR.md).
 
 ---
 
@@ -297,3 +302,4 @@ These are small hooks into the game's own screens and systems.
 | `src/xapi_input.cpp`, `input_sdl.cpp` | Controllers and keyboard |
 | `src/options_video.cpp`, `save_pages.cpp`, `menu_quit.cpp` | In-game additions |
 | `src/gn_core.cpp`, `gn_hooks.cpp` | Deterministic mode and the netplay interface |
+| `src/editor.cpp`, `mesh_edit.cpp`, `coll_edit.cpp`, `grid_edit.cpp`, `mods.cpp` | Level editor, loose data folder |

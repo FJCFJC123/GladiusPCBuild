@@ -2,20 +2,23 @@
 
 **A native Windows port of *Gladius* (LucasArts, 2003), built from the retail Xbox executable.**
 
-GladiusPort converts the Xbox `default.xbe` into a Windows `.exe`. The game's original code runs directly on the
-PC, with no emulator. Every call it made into the Xbox kernel, Direct3D 8, DirectSound or the controller libraries
-now goes to `gladiusport.dll`, which handles it with Windows equivalents: Direct3D 11, WASAPI, SDL2 and plain files.
+GladiusPort converts the Xbox `default.xbe` into a Windows `.exe`. The game's original x86 code runs natively on
+the PC, with no CPU emulation. Everything the Xbox provided around the game (its kernel, Direct3D 8, DirectSound
+and the controller libraries) is reimplemented in `gladiusport.dll` on top of Direct3D 11, WASAPI, SDL2 and plain
+files. Strictly speaking, that reimplementation is a form of high-level emulation of the Xbox's system libraries,
+much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio chip) is never emulated.
 
 > **No game files are included.** You need your own copy of the retail Xbox disc (USA). The GladiusPort Builder
 > converts it into a PC install on your machine.
 
-📖 **[How it works: kernel replacement, the Direct3D 8 → 11 layer and the visual enhancements](docs/TECHNICAL.md)**
+- 📖 **[How it works](docs/TECHNICAL.md)**: kernel replacement, the Direct3D 8 → 11 layer and the visual enhancements
+- 🛠️ **[Gladius Editor](docs/EDITOR.md)**: the built-in level editor
 
 ---
 
 ## Features
 
-- **Native PC port** of the Xbox release: no emulation, the original game logic unchanged.
+- **Native PC port** of the Xbox release: the original game code runs natively, unchanged.
 - **Any resolution and widescreen** (4:3, 16:9, 21:9), resizable window and borderless fullscreen.
 - **Modern renderer**:
   - HDR;
@@ -35,6 +38,7 @@ now goes to `gladiusport.dll`, which handles it with Windows equivalents: Direct
 - **Controllers**: Xbox, PlayStation, Switch Pro and more through SDL2, plus keyboard support.
 - **Quality of life**: in-game Video options, 27 save slots, Quit Game in the main menu, all versus arenas.
 - **Online versus** over the internet or LAN: encrypted, relay-hosted, with match codes.
+- **Level editor** (optional): edit levels live inside the running game. See [below](#level-editor).
 
 ---
 
@@ -47,6 +51,23 @@ now goes to `gladiusport.dll`, which handles it with Windows equivalents: Direct
 
 The game files, saves, settings and logs all live in that one folder. For online play, choose **VersuS** on the
 main menu, then **Host** or **Join**. Both players need the same GladiusPort version.
+
+---
+
+## Level editor
+
+Tick **Level editor** in the builder to also install `gladius_editor.exe`: the game with an editor window
+alongside it. You edit the level you're standing in, and the result appears immediately.
+
+- **Props:** place, move, rotate, duplicate and delete them, set their properties, and drag them in the game
+  window.
+- **Meshes:** sculpt, smooth, cut and recolour prop models and level terrain; paint textures; import GLB models.
+- **Collision:** raise, lower, flatten and switch off floor collision; paint surface types.
+- **Battle grid:** paint movement, line-of-sight and start-position layers in an arena.
+- **Safe storage:** edits save as loose files in `data\`, never touching `gladius.bec`, and a level can be reset to
+  the original at any time.
+
+The full guide is in **[docs/EDITOR.md](docs/EDITOR.md)**.
 
 ---
 
