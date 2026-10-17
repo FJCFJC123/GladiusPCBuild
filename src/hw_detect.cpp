@@ -11,8 +11,8 @@
 static HwInfo g_hw;
 static bool g_done;
 
-// Video memory from the display-class registry key of the adapter with this name (64-bit qwMemorySize). DXGI's
-// DedicatedVideoMemory is a SIZE_T - 32 bits in this 32-bit process - so 11 GB read as 3 GB (2026-10-10).
+// Video memory from the adapter's display-class registry key (64-bit qwMemorySize); DXGI's SIZE_T value is
+// capped at 4 GB in a 32-bit process.
 static UINT registry_vram_mb(const char *name)
 {
     HKEY root;
@@ -96,9 +96,8 @@ const HwInfo &port_hw_info()
         h.cores = h.threads;
     h.screen_w = GetSystemMetrics(SM_CXSCREEN);
     h.screen_h = GetSystemMetrics(SM_CYSCREEN);
-    // Tier: video memory is the best single signal for what this renderer costs (shadow maps, the 2x-tall scene,
-    // HDR targets). Integrated Intel graphics and anything under 2 GB: Low; under 6 GB: Medium; else High. Fewer
-    // than 4 cores caps it at Medium (shadow casting costs CPU on the game core).
+    // Tier by video memory: integrated Intel or under 2 GB = Low, under 6 GB = Medium, else High; fewer than 4 cores
+    // caps it at Medium.
     bool integrated = h.vendor == 0x8086 || h.vram_mb < 1024;
     h.tier = integrated || h.vram_mb < 2048 ? HW_LOW : h.vram_mb < 6144 ? HW_MEDIUM : HW_HIGH;
     if (h.cores < 4 && h.tier == HW_HIGH)

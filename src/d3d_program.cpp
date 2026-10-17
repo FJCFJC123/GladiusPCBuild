@@ -1,6 +1,5 @@
-// Engine-program draws: the engine's own vertex/pixel shaders (translated to HLSL), vertex attribute formats (VAF),
-// shader constants, constant vertex attributes, immediate mode (push SET_BEGIN_END / INLINE_ARRAY), indexed and
-// UP draws, and texture stages bound by header (SetTexture) or raw offset/format (SwitchTexture / push methods).
+// Engine-program draws: the engine's own shaders (translated to HLSL), vertex attribute formats, shader constants,
+// immediate mode (push SET_BEGIN_END / INLINE_ARRAY), indexed and UP draws, and texture stages.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <intrin.h>
@@ -127,8 +126,8 @@ static const VsLighting &vs_lighting(DWORD id)
 }
 static ID3D11SamplerState *g_samplers[4];
 
-// Sampler per stage from the deferred texture states the engine writes directly (D3D_g_DeferredTextureState
-// 0x2C51D0 [stage][32]: 0 ADDRESSU, 1 ADDRESSV, 2 ADDRESSW, 3 MAGFILTER, 4 MINFILTER, 5 MIPFILTER, 8 MAXANISOTROPY)
+// Sampler per stage from the deferred texture states the engine writes directly (D3D_g_DeferredTextureState 0x2C51D0
+// [stage][32]: 0-2 ADDRESSU/V/W, 3 MAG, 4 MIN, 5 MIPFILTER, 8 MAXANISOTROPY).
 static std::map<unsigned long long, ID3D11SamplerState *> g_sampler_cache;
 
 static D3D11_TEXTURE_ADDRESS_MODE xb_address(DWORD a)
@@ -179,10 +178,8 @@ static void dump_failed(const char *what, DWORD id, const std::string &hlsl, ID3
     port_log("%s #%u translation failed to compile: %s\n", what, id, err ? (const char *)err->GetBufferPointer() : "?");
 }
 
-// Compiled shaders persist in build\shadercache (one .cso per HLSL text + profile, FNV-1a 64 of both): D3DCompile cost
-// 100 ms - 1.3 s per shader and every new one appeared mid-frame - the battle intro camera pan reveals the arena,
-// characters and effects one by one and stuttered on each first use (2026-10-08 profile). Every compile is logged
-// with its translate / compile time and whether the cache had it.
+// Compiled shaders persist in build\shadercache (one .cso per HLSL text + profile), so first-use compiles don't stutter
+// mid-frame. Every compile is logged with its timings and whether the cache had it.
 static bool compile_cached(const std::string &hlsl, const char *target, ID3DBlob **code, ID3DBlob **err, bool *hit)
 {
     unsigned long long h = 0xCBF29CE484222325ull;
@@ -314,7 +311,7 @@ static ID3D11PixelShader *get_ps(DWORD id)
     return ps;
 }
 
-// pixel shader evaluating vertex shader vs_id's lighting per pixel
+// Pixel shader evaluating vertex shader vs_id's lighting per pixel.
 static ID3D11PixelShader *get_ps_lit(DWORD id, DWORD vs_id)
 {
     unsigned long long key = (unsigned long long)id << 32 | vs_id;
@@ -362,8 +359,7 @@ static ID3D11InputLayout *get_layout(const LayoutKey &k, VsEntry *vs)
     return l;
 }
 
-// Constant buffer contents: uploaded only when they differ from what the buffer already holds. Per-draw
-// UpdateSubresource of the full 3.3 KB vertex block cost every draw a driver copy and a GPU dependency.
+// Constant buffer upload, only when the contents differ from what the buffer holds.
 static void cb_put(ID3D11Buffer *b, float *shadow, bool *valid, const float *data, UINT bytes)
 {
     if (*valid && !memcmp(shadow, data, bytes))
@@ -378,9 +374,8 @@ static void cb_put(ID3D11Buffer *b, float *shadow, bool *valid, const float *dat
     }
 }
 
-// Transient data (UP / inline vertices, expanded indices) is appended to a ring buffer (NO_OVERWRITE) instead of
-// re-discarding one buffer per draw; only a wrap discards. One Map per draw writes all of its pieces, so a wrap can
-// never discard a piece written earlier for the same draw.
+// Transient data (UP / inline vertices, expanded indices) goes into a NO_OVERWRITE ring buffer; only a wrap discards.
+// One Map per draw writes all its pieces, so a wrap never discards a piece of the same draw.
 struct Ring {
     ID3D11Buffer *buf;
     UINT cap, pos, bind;
@@ -414,13 +409,9 @@ static BYTE *ring_map(Ring &r, UINT bytes, UINT *offset)
     return (BYTE *)m.pData + *offset;
 }
 
-// Vertex stream cache. Indexed draws reference big shared vertex buffers (the world uses a few with ~20k
-// vertices); re-uploading [0, max index] per draw cost ~200 MB/frame. Instead each source address keeps a GPU
-// copy mirrored in 64 KB chunks: a chunk is hashed at most once per frame and re-uploaded only when its bytes
-// changed. Chunks are always verified over the buffer's full known extent (the largest range any draw used), not
-// the current draw's range, and a Lock only drops the "verified this frame" mark: before 2026-10-08 a Lock reset the
-// chunk lengths and per-draw ranges kept changing the last chunk's length, and either one forced an upload of
-// unchanged bytes - AltahrunRuins re-uploaded 26.8 MB of vertices every frame (14 ms CPU, plus GPU copy time).
+// Vertex stream cache: each source address keeps a GPU copy in 64 KB chunks, hashed at most once per frame and
+// re-uploaded only when the bytes changed. Chunks are verified over the buffer's full known extent; a Lock only drops
+// the "verified this frame" mark.
 static const UINT VB_CHUNK = 64 * 1024;
 struct VbChunk {
     DWORD frame, len, hash_a, hash_b;
@@ -440,7 +431,7 @@ void d3d_vb_invalidate_all()
             k.frame = 0xFFFFFFFF, k.len = 0;
 }
 
-// the game locked a vertex buffer for writing: drop the verified state of its chunks (same-frame rewrites)
+// The game locked a vertex buffer for writing: drop its chunks' verified state.
 void d3d_vb_invalidate(DWORD data)
 {
     auto it = g_vb_cache.find(data);
@@ -530,10 +521,8 @@ static void init_program_objects()
 }
 
 // ------------------------------------------------------------------------------------------------ materials
-// Surface effects by texture asset name ([video] Materials = strength, 0 = off): 1 water (ripples + moving glints),
-// 2 lava (flowing UVs, glows above white for HDR / bloom), 3 glowing props (braziers, lanterns: flicker), 4 foliage
-// cards (cut-out .cc leaves / bushes / palms / plants: gentle sway), 5 cloth (banners, flags: wider sway).
-// Glowing ones also skip the sun shadow (G-buffer depth negative). Names: the named HD pack (2026-10-10 survey).
+// Surface effects by texture asset name ([video] Materials = strength, 0 = off): 1 water, 2 lava (glows above white),
+// 3 glowing props (flicker), 4 foliage cards (sway), 5 cloth (wider sway). Glowing ones skip the sun shadow.
 static int material_of_key(const std::string &k)
 {
     if (k.empty())
@@ -564,9 +553,8 @@ static int material_of_key(const std::string &k)
     return m;
 }
 
-// Per-draw texture facts by (Data, Format): asset name, material, shadow role. tex_key() locks the HD loader and
-// copies a string; two calls per draw (material + shadow caster name) cost ~1.5 ms a frame on the world map
-// (2026-10-10). Entries are re-derived when the name registry changes (g_tex_names_gen).
+// Per-draw texture facts by (Data, Format): asset name, material, shadow role. Cached because tex_key() locks the HD
+// loader; re-derived when the name registry changes (g_tex_names_gen).
 extern volatile LONG g_tex_names_gen;                   // tex_replace.cpp
 struct TexInfo {
     LONG gen;
@@ -596,10 +584,9 @@ static const TexInfo &tex_info(DWORD data, DWORD format)
 }
 
 // ------------------------------------------------------------------------------------------------ effect lights
-// Additive particle draws (fire, sparks, glows - drawn inside the engine's particle renderer) are light sources:
-// position = their vertices' centroid in view space (P^-1 * WVP), colour = average vertex colour x the texture's
-// average colour (sampled once per texture), weight = brightness x size. Nearby ones merge; the four strongest of a
-// frame light the next frame's lit characters and relit arena surfaces ([video] FxLights = intensity, 0 = off).
+// Effect lights: additive particle draws (fire, sparks, glows) become light sources at their centroid, coloured by
+// vertex and texture colour, weighted by brightness x size. The four strongest of a frame light the next frame's lit
+// characters and relit surfaces ([video] FxLights = intensity, 0 = off).
 struct FxLight {
     float pos[3], col[3], w;
 };
@@ -726,7 +713,7 @@ static void fx_light_collect(const BYTE *const streams[16], const UINT strides[1
         g_fx_frame.push_back({{vp[0], vp[1], vp[2]}, {col[0], col[1], col[2]}, w});
 }
 
-// fx params slot (x already holds the bump height): y = light count, z = intensity; then the lights
+// fx params slot (x = bump height): y = light count, z = intensity, then the lights
 static void fx_lights_put(float *p)
 {
     fx_roll();
@@ -742,7 +729,7 @@ static void fx_lights_put(float *p)
 }
 
 // ------------------------------------------------------------------------------------------------ draw
-// verts: per stream raw data pointers/strides; indices: element order to draw (already primitive-expanded)
+// One program draw. streams: raw data pointers / strides; indices: element order (already primitive-expanded).
 static void draw_program(const BYTE *const streams[16], const UINT strides[16], UINT vertex_count,
                          const std::vector<UINT> &indices, D3D11_PRIMITIVE_TOPOLOGY topo, bool cached = false,
                          ID3D11Buffer *static_ib = nullptr)
@@ -850,8 +837,8 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
     static float vsc[(192 + 16 + 2) * 4], vsc_bound[(192 + 16 + 2) * 4];
     static bool vsc_valid;
     static DWORD vsc_gen;
-    // the 3.4 KB block is copied (and compared) only when the game wrote constants since the last draw; per draw only
-    // the port's own rows (c92 camera, 208 screen / jitter, 209 material) can differ
+    // the constant block is copied only when the game wrote constants since the last draw; otherwise only the port's
+    // own rows (c92 camera, 208 screen / jitter, 209 material) can differ
     bool vsc_fresh = vsc_gen != g_vsc_gen;
     if (vsc_fresh) {
         vsc_gen = g_vsc_gen;
@@ -860,9 +847,8 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
     } else {
         memcpy(&vsc[(92 + 96) * 4], g_vsc[92 + 96], 16);  // c92: a lit draw may have replaced it
     }
-    // shader screen-space extent: the Xbox screen space the engine's programs write positions in (back buffer x the
-    // game's own supersample factors), NOT the scene target - the viewport maps that space onto a bigger target.
-    // Using the scene size (render scale > 1) squeezed every program draw into the top-left (2026-10-08).
+    // shader screen space: the Xbox space the engine's programs write positions in (back buffer x the game's supersample
+    // factors), not the scene target
     vsc[208 * 4 + 0] = (float)(g_d3d.width * g_d3d.game_ss_x);
     vsc[208 * 4 + 1] = (float)(g_d3d.height * g_d3d.game_ss_y);
     d3d_taa_jitter(&vsc[208 * 4 + 2]);                  // TAA: this frame's sub-pixel offset (d3d_taa.cpp)
@@ -878,8 +864,7 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
     float msec = mat ? frame_sec : 0;
     vsc[209 * 4 + 0] = (float)mat, vsc[209 * 4 + 1] = msec;
     vsc[209 * 4 + 2] = mat == 4 ? 0.03f * g_d3d.materials : mat == 5 ? 0.05f * g_d3d.materials : 0;
-    // per-pixel lighting: the camera in this draw's own vertex space -> c92 (VS_CAMERA_POSITIONDIRECTION_LOCAL, unused
-    // by the game). The camera is where clip w is 0 with x = y = 0: C = WVP^-1 * (0, 0, 1, 0), whatever the space.
+    // per-pixel lighting: the camera in this draw's vertex space -> c92: C = WVP^-1 * (0, 0, 1, 0)
     ID3D11ShaderResourceView *shadow_srv = nullptr;    // lit draws: last frame's shadow map at t5 / s5
     ID3D11SamplerState *shadow_cmp = nullptr;
     float shadow_rows[16], shadow_texel = 0, shadow_strength = 0;
@@ -916,8 +901,8 @@ static void draw_program(const BYTE *const streams[16], const UINT strides[16], 
         memcpy(&psc[14 * 4 + 2], &rs[0x5F], 4);         // FOGEND
         memcpy(&psc[14 * 4 + 3], &rs[0x60], 4);         // FOGDENSITY
     }
-    // soft particles: blended, depth-tested, not depth-writing 3D draws fade against the G-buffer depth;
-    // x = on, y = 1 / range, z = 1: fade alpha (alpha blending) / 2: fade colour too (additive)
+    // soft particles: blended, depth-tested, non-writing 3D draws fade against the G-buffer depth
+    // (x = on, y = 1 / range, z = 1 fade alpha / 2 fade colour)
     bool soft = g_d3d.soft_particles && g_d3d.in_fx && g_d3d.gbuf_srv && d3d_nv(0x304) && d3d_nv(0x30C) && !d3d_nv(0x35C);
     if (soft) {
         DWORD sf = d3d_nv(0x344);
@@ -1104,7 +1089,7 @@ static void draw_immediate()
     g_cur_vaf = saved;
 }
 
-// push-buffer methods relevant to program draws (called for every decoded method)
+// Push-buffer methods relevant to program draws (called for every decoded method).
 void d3d_program_method(DWORD method, const DWORD *data, DWORD count)
 {
     if (method == 0x17FC) {                            // SET_BEGIN_END
@@ -1167,10 +1152,8 @@ void d3d_program_method(DWORD method, const DWORD *data, DWORD count)
     }
 }
 
-// Indexed draws: the game's 16-bit index lists (strips / fans / lists) expanded to 32-bit triangle lists once and
-// kept on the GPU, keyed by (address, count, primitive) and checked by a hash of the game's indices each draw.
-// Expanding and re-uploading every list every draw was ~1.3 ms + ~1.7 MB a frame on the world map (2026-10-10),
-// and the shadow pass copied them all again; it now draws from these buffers too.
+// Indexed draws: the game's 16-bit index lists expanded to 32-bit triangle lists once and kept on the GPU, keyed by
+// (address, count, primitive) and checked by a hash each draw. The shadow pass draws from these too.
 struct IbEntry {
     ID3D11Buffer *ib;
     std::vector<UINT> idx;                              // the expanded list (CPU copy: shadow caster identity)

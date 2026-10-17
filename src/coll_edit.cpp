@@ -1,15 +1,7 @@
-// Collision painter (gladius_editor.exe, Level page): edit the scene's floor collision (.pms) live - raise / lower /
-// flatten / smooth it with a brush, switch floor triangles off and on, paint their surface category - and save the
-// level's loose .pms.
-//
-// The engine (loader 0x1D2680) keeps the .pms file buffer whole: the scene's +0xC points at its 0x44-byte header (grid
-// size +8 / +0xC, bounds +0x28, 1 / cell size +0x40 - rewritten by the loader) and globals point into the rest:
-// vertices 0x380670 (count 0x380668), normals 0x38067C (count 0x380674), triangles 0x4CAB8C, cell records 0x4CAB90,
-// cell lists 0x4CAB94, cell table 0x4CAB98. The height check (0x1D38D0) and the other queries read only those, so an
-// edit goes live by rebuilding the file into our own buffer, copying its header over the engine's and pointing the
-// globals at our arrays. The unload (0x1D1CD0) frees the globals only when 0x4CAB9C is set (never, for a file load),
-// so our buffer stays ours; it is rewritten in place (poly pointers handed out by the height check stay readable).
-// The loader also gives category-less triangles every category (flags | 0xF000); the live copy does the same.
+// Collision painter (editor, Level page): edit the scene's floor collision (.pms) live - raise / lower / flatten / smooth,
+// switch triangles off and on, paint surface categories - and save the level's loose .pms. The engine (loader 0x1D2680)
+// reads collision through a header and globals (vertices 0x380670, normals 0x38067C, triangles 0x4CAB8C, cells
+// 0x4CAB90..0x4CAB98); an edit goes live by rebuilding the file into our own buffer and pointing those at it.
 // File layout: tools/pms.py.
 #include "port.h"
 #include <string>
@@ -30,8 +22,8 @@ static const char *const k_tools[NTOOLS] = {"Raise", "Lower", "Flatten (to the c
                                             "Floor off (not walkable)", "Floor on (walkable)", "Surface category"};
 static const char *const k_guide_heads[NTOOLS] = {"Raise", "Lower", "Flatten", "Smooth", "Floor off (not walkable)",
                                                   "Floor on (walkable)", "Surface category"};
-// the category is 4 flag bits (the world maps use 1 / 2 / 4 / 8 and a few mixes; arenas 1). Meanings as observed on
-// the world map (user): 1 morning search / loot strip, 2 road, 4 off-road ground, 8 unknown, 4+2 NPC spawn areas
+// Surface category: 4 flag bits. As seen on the world map: 1 search spot / loot, 2 road, 4 off-road, 8 unknown,
+// 4+2 NPC spawn areas; arenas use 1.
 static const char *const k_cat_names[16] = {"0  every category", "1  search spot (loot)", "2  road",
     "3  road + search", "4  off-road ground", "5  off-road + search", "6  NPC spawn (road + off-road)",
     "7  road + off-road + search", "8  unknown (darker blue)", "9  8 + search", "10  8 + road", "11  8 + road + search",
@@ -123,7 +115,7 @@ static std::string field(const std::string &text, const char *name)   // "NAME: 
     return a == std::string::npos ? "" : v.substr(a, b - a + 1);
 }
 
-// the scene file -> its PHYSICS line -> the .pms beside it
+// The scene file -> its PHYSICS line -> the .pms beside it.
 static std::string find_pms_key()
 {
     std::string scn;
@@ -197,7 +189,7 @@ static bool load_pms()                                  // game thread
     return true;
 }
 
-// the model -> PMS2 bytes (the file; live = the loader's category fix-up applied)
+// The model -> .pms (PMS2) bytes; live = with the loader's category fix-up applied.
 static bool build(std::string &out, bool live)
 {
     std::vector<std::array<float, 3>> V;
@@ -349,7 +341,7 @@ static void go_live()                                   // game thread: the mode
     g_live_at = GetTickCount();
 }
 
-// the camera ray under a screen point against the model -> hit point
+// The camera ray under a screen point against the model -> hit point.
 static bool pick(float nx, float ny, float hit[3])
 {
     CamFrame f;
@@ -498,8 +490,7 @@ void coll_draw(const CamFrame &cf)                      // game thread, overlay 
     if (!C.loaded) { LeaveCriticalSection(&g_ccs); return; }
     float hit[3];
     bool have = g_cin.valid && pick(g_cin.nx, g_cin.ny, hit);
-    // the area shown grows with the camera's distance (zoomed out = a wider patch); centred on the cursor, else on
-    // the middle of the screen; the nearest triangles first when there are too many to draw
+    // area shown grows with camera distance, centred on the cursor (else the screen middle); nearest triangles first
     float r = k_radii[g_radius], ctr3[3];
     bool cen = have;
     if (have) memcpy(ctr3, hit, sizeof ctr3);

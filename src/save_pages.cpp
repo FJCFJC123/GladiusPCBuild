@@ -1,16 +1,6 @@
-// Save / load screen: more than the 3 most recent saves ([game] SavePages=1, default on).
-// The retail screen (vtable 0x33F2FC, "SAVE GAME") has three slot widgets named "0".."2" and fills three slot records
-// (this+0xB8, 0x28 each) in its refresh (vtable +0x10, 0x3B090): FUN_001D7C70(slot, record, device, &name, &x) for
-// slot 0..2 (call at 0x3B20A). A save's slot is a tag in its name - "Orin's School Day 1 0:00 hrs [slot][version]",
-// written by the save writer FUN_001D87B0 - and the device cache (FUN_001D7B30) holds any slot number, so slots past
-// 2 work once every call that hands the save system a slot gets the absolute one: page * 3 + widget. The widget
-// number ("0".."2" -> atoi) stays for the screen's own records and labels; three calls take it to the save system:
-// 0x36647 FUN_001D9970 (slot version), 0x380F0 FUN_00036060, 0x3B6F4 FUN_0003A830 (save). Without those a save made
-// on page 2 replaced / renumbered page 1's saves (2026-10-09). LB / RB (Xbox white / black; keyboard Q / W
-// or PageUp / PageDown) flip pages in the screen's update (vtable +0x30, 0x3BB20) - as many pages as the saves need
-// plus one with a free slot for a new save, up to 9 (27 saves).
-// The other "3 most recent" limits go to 27: the >3 saves warning (0x3B57A), the versus-unlock scan over the saves
-// (0xFD582 / 0xFD584) and the "any save present" scan (0x36BB2).
+// Save / load screen paging ([game] SavePages=1): up to 27 saves, 3 per page, LB / RB (Q / W, PageUp / PageDown)
+// flip pages. A save's slot number is a "[slot][version]" tag in its name; every call that hands the save system a
+// slot gets page * 3 + widget, the device scan keeps every slot, and the other "3 most recent" limits go to 27.
 #include "port.h"
 #include <stdint.h>
 #include <string.h>
@@ -25,6 +15,7 @@ static bool g_screen_seen, g_screen_live;               // save_update ran since
 int port_player1_page_pressed();                        // xapi_input.cpp: -1 LB / white, +1 RB / black, 0
 
 typedef int(__cdecl *SlotFn)(int, void *, int, void *, void *);
+// Slot calls from the save screen, offset by the current page.
 static int __cdecl slot_get(int idx, void *rec, int dev, void *name, void *x)
 {
     return ((SlotFn)0x1D7C70)(idx + g_page * PER_PAGE, rec, dev, name, x);
@@ -39,6 +30,7 @@ typedef int(__cdecl *Slot2Fn)(int, int);
 static int __cdecl slot_action(int slot, int dev) { return ((Slot2Fn)0x36060)(slot + g_page * PER_PAGE, dev); }
 static int __cdecl slot_save(int slot, int dev) { return ((Slot2Fn)0x3A830)(slot + g_page * PER_PAGE, dev); }
 
+// True when the screen's sub-panel at `off` is open.
 static bool panel_open(BYTE *self, int off)
 {
     BYTE *p = *(BYTE **)(self + off);
@@ -47,6 +39,7 @@ static bool panel_open(BYTE *self, int off)
 
 typedef void(__thiscall *UpdateFn)(void *, int);
 typedef void(__thiscall *RefreshFn)(void *);
+// Save screen update (vtable 0x33F32C): flip pages on LB / RB, then run the retail update.
 static void __fastcall save_update(BYTE *self, void *edx, int arg)
 {
     (void)edx;
@@ -71,13 +64,8 @@ static void __fastcall save_update(BYTE *self, void *edx, int arg)
     ((UpdateFn)0x3BB20)(self, arg);
 }
 
-// ------------------------------------------------------------------------------------------------ device scan
-// FUN_001D8DA0 (thiscall: the device record) scans a device: status checks, then every save's name tag
-// "[slot][version]" picks, per slot, the newest save carrying it - for slots 0..2 only (6-int stack array), single
-// digit slot tags, leftovers compacted into empty slots 0..2 ("the most recent 3") - and loads those slots into the
-// device's slot cache. Replaced (same calls, same status codes) with MAX_SAVES slots and multi-digit slot tags.
-// Device record: +8 device, +0xC status, +0x18 / +0x1C (save count), +0x20 name string. Save entry (0x18, ctor
-// 0x1D6F10 / dtor 0x1D6F30): +8 name, +0x10 slot (-1), +0x12 state (1 = present, 2 = taken).
+// Device scan (replaces FUN_001D8DA0): same calls and status codes as retail, but MAX_SAVES slots and multi-digit
+// slot tags. Device record: +8 device, +0xC status, +0x18 / +0x1C save count, +0x20 name.
 struct SaveEntry {
     DWORD a, b;
     char *name, *other;
@@ -89,7 +77,7 @@ static_assert(sizeof(SaveEntry) == 0x18, "save entry layout");
 static void *vfn(void *o, int off) { return (*(void ***)o)[off / 4]; }
 typedef char(__cdecl *DevTest)(int);
 
-// first "[number]" from p on: its value and where it ends; -1 if none
+// First "[number]" at or after *pos: its value (and *pos moves past it); -1 if none.
 static long tag_after(const char *s, int *pos)
 {
     for (int i = *pos; s[i]; i++) {
@@ -107,6 +95,7 @@ static long tag_after(const char *s, int *pos)
     return -1;
 }
 
+// Assign each slot its newest save, fill empty slots with the rest, and load them into the device's slot cache.
 static void scan_slots(BYTE *rec, int dev, void *obj)
 {
     int best[MAX_SAVES], ver[MAX_SAVES];
@@ -176,6 +165,7 @@ static void scan_slots(BYTE *rec, int dev, void *obj)
     }
 }
 
+// Device scan entry: status checks, then scan_slots.
 static void __fastcall scan_device(BYTE *rec)
 {
     if (BYTE *s = *(BYTE **)(rec + 0x20)) {             // drop the record's name string (refcounted)
@@ -228,18 +218,15 @@ static void __fastcall scan_device(BYTE *rec)
     }
 }
 
-// once per game frame (frame hook, gn_hooks.cpp): is the save screen open this frame?
+// Once per game frame: is the save screen open this frame?
 void port_save_frame()
 {
     g_screen_live = g_screen_seen;
     g_screen_seen = false;
 }
 
-// U: now shows other files (netplay save exchange, gladiusnet.dll): the device slot caches still list the old
-// saves, and the save screen draws from them - in versus Load School team 1 was shown team 0's saves (2-PC test
-// 2026-10-10) while loading picked team 1's files. Rescan every device the way the game does after it writes a
-// save (0x1D9522: reset 0x1D7C40, scan 0x1D8DA0), then let an open screen refetch its 3 slots. Game memory
-// changes here, so callers run it at the same point of the same frame on every netplay machine.
+// Rescan every storage device after the files under U: changed (netplay save exchange) and refresh an open save
+// screen. Changes game memory: callers run it at the same frame on every netplay machine.
 void port_save_rescan()
 {
     int n = 0;
@@ -255,6 +242,7 @@ void port_save_rescan()
     port_log("saves: rescanned %d device(s)%s\n", n, refresh ? ", save screen refreshed" : "");
 }
 
+// Install the save screen paging when [game] SavePages is on.
 void port_save_pages_init(const char *ini)
 {
     if (!GetPrivateProfileIntA("game", "SavePages", 1, ini))

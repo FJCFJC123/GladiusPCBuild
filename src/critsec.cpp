@@ -1,11 +1,5 @@
-// Critical sections on the Xbox RTL_CRITICAL_SECTION layout (28 bytes). Game, engine, CRI and CRT code
-// call RtlInitialize/Enter/Leave/TryEnterCriticalSection on structures that are often statically
-// initialized in .data in Xbox format, so Windows CRITICAL_SECTION cannot be used on them directly.
-//
-//   +0x00 event header (type/size bytes)        +0x04 SignalState  -> unused (wait event: side table)
-//   +0x08 wait list head (self pointers)        +0x10 LockCount (-1 = free)
-//   +0x14 RecursionCount                        +0x18 OwningThread  -> here: Windows thread id
-// Classic NT algorithm: LockCount counts owners+waiters - 1; contention waits on an auto-reset event.
+// Xbox kernel critical sections, implemented on the Xbox RTL_CRITICAL_SECTION layout (28 bytes) because game code
+// initializes them statically in that format. LockCount counts owners + waiters - 1; contention waits on an event.
 #include "port.h"
 #include <unordered_map>
 
@@ -19,12 +13,12 @@ struct XboxCritSec {
 };
 static_assert(sizeof(XboxCritSec) == 28, "Xbox RTL_CRITICAL_SECTION is 28 bytes");
 
-// The wait event lives in a side table keyed by the structure's address, not in the structure: critical sections
-// are game memory, and a netplay state sync copies game memory between machines - a Windows handle stored in it
-// would be another process's number on the receiving PC. (The SignalState field stays 0.)
+// Wait events live in a side table keyed by address, not in the structure: a netplay state sync copies game
+// memory between machines, and a Windows handle stored there would be invalid on the other PC.
 static SRWLOCK g_cs_lock = SRWLOCK_INIT;
 static std::unordered_map<const void *, HANDLE> *g_cs_events;
 
+// The wait event for cs (created on first use).
 static HANDLE cs_event(XboxCritSec *cs)
 {
     AcquireSRWLockShared(&g_cs_lock);

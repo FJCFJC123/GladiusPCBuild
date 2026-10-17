@@ -1,18 +1,16 @@
-// Main menu "Quit Game" (keyboard Esc quits too, d3d_core.cpp). The main menu is a sub-state of the boot / menu
-// state: its update (0xFE250, thiscall, called at 0x101BBE) reads the selected item's name on A
-// (thiscall list->FUN_00036E20(&name) + string compare 0x1891F0) - "NewGame", "LoadGame", "Options", "VersuS" - and requests
-// that state. Its list ([this+0x38], the list-menu API at 0x1255xx: find item 0x1256D0, add item 0x125660) gets a
-// "Quit" item the first time the menu runs; picking it ends the game.
+// Adds a "Quit Game" item to the main menu. The main menu update (0xFE250) is wrapped: the item is added to its
+// list once, and selecting it with A exits.
 #include "port.h"
 #include <stdint.h>
 #include <string.h>
 
 static void *g_list_done;
 
+// True when the list's selected item is `name`.
 static bool selected_is(void *list, const char *name)
 {
     struct Str { BYTE *p; } s = {nullptr};
-    ((void(__thiscall *)(void *, void *))0x36E20)(list, &s);   // the selected item's name (refcounted string)
+    ((void(__thiscall *)(void *, void *))0x36E20)(list, &s);   // selected item's name (refcounted string)
     bool eq = s.p && ((char(__thiscall *)(void *, const char *))0x1891F0)(&s, name) != 0;
     if (s.p && --*(short *)(s.p + 8) == 0) {
         void *h = ((void *(__cdecl *)(void *))0x188EE0)(s.p);
@@ -39,6 +37,7 @@ static void __fastcall main_menu_update(BYTE *self)
     ((void(__thiscall *)(void *))0xFE250)(self);
 }
 
+// Route the main menu's update call (0x101BBE) through main_menu_update.
 void port_menu_quit_init()
 {
     BYTE *call = (BYTE *)0x101BBE;

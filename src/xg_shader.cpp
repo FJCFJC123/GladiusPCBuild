@@ -1,8 +1,6 @@
-// XGRAPHICS shader assembler replacement. The engine generates vertex/pixel shader SOURCE TEXT at runtime and
-// assembles it with XGAssembleShader (0x2F0DE3) into Xbox microcode / a register-combiner definition, which it
-// copies into its program pool and later hands to LoadVertexShaderProgram / SelectVertexShaderDirect /
-// SetPixelShaderProgram. Here the source is recorded (id), and the "compiled" output is a correctly shaped
-// placeholder that carries the id, so the D3D11 side knows which (HLSL-translated) shader is meant.
+// XGAssembleShader replacement. The engine generates shader source text at runtime; here the source is recorded and
+// the "compiled" output is a correctly shaped placeholder carrying the source hash, so the D3D11 side knows which
+// (HLSL-translated) shader is meant.
 //   vertex: 4-byte header {0x78, 1, instruction count, 0} + count * 16 bytes, tag in the first slot
 //   pixel : 240-byte D3DPIXELSHADERDEF, tag in its first two dwords
 #include "d3d.h"
@@ -16,11 +14,9 @@ static std::vector<XgShader> g_shaders;                // local ids (keys of the
 static std::map<DWORD, DWORD> g_by_hash;               // source hash -> local id
 static SRWLOCK g_shader_lock = SRWLOCK_INIT;
 
-// Netplay: the tag in game memory carries the SOURCE HASH, not a local sequence number - each PC assembles shaders in
-// its own order (menus, intro, lobby), so after a state sync the host's ids meant other shaders here (2026-10-07: the
-// client drew the arena with the wrong programs - flat orange, smeared geometry). The sources themselves are kept in
-// game memory (registry below, in the container's shared page), so a hash this PC never assembled is resolved from
-// the host's copy after a sync.
+// The tag holds the source hash (each PC assembles shaders in its own order). Sources are also kept in game memory
+// (registry in the container's shared page), so after a netplay sync a hash this PC never assembled resolves from
+// the host's copy.
 struct SyncedSource { DWORD hash, len; char text[1]; };
 struct Registry { DWORD count, cap; SyncedSource **list; };     // shared page +0xA40 (game memory)
 static Registry g_local_registry;
@@ -30,6 +26,7 @@ static Registry *registry()
     return page ? (Registry *)(page + 0xA40) : &g_local_registry;
 }
 
+// FNV-1a hash of the shader source (never 0).
 static DWORD source_hash(const std::string &s)
 {
     DWORD h = 0x811C9DC5;
@@ -37,7 +34,7 @@ static DWORD source_hash(const std::string &s)
     return h ? h : 1;
 }
 
-// caller holds the lock exclusively
+// Source hash -> local id (caller holds the lock exclusively).
 static DWORD local_id(DWORD hash, bool pixel, const std::string &text)
 {
     auto it = g_by_hash.find(hash);
@@ -49,6 +46,7 @@ static DWORD local_id(DWORD hash, bool pixel, const std::string &text)
     return id;
 }
 
+// Add a source to the synced registry in game memory.
 static void registry_add(DWORD hash, const std::string &text)
 {
     Registry *r = registry();
@@ -59,8 +57,8 @@ static void registry_add(DWORD hash, const std::string &text)
         DWORD cap = r->cap ? r->cap * 2 : 128;
         SyncedSource **l = (SyncedSource **)game_alloc(cap * sizeof *l);
         if (r->list) memcpy(l, r->list, r->count * sizeof *l);
-        r->list = l;                                    // the old table is left (small, and never freed: a state
-        r->cap = cap;                                   // sync may still be copying it)
+        r->list = l;                                    // old table never freed: a sync may still be copying it
+        r->cap = cap;
     }
     SyncedSource *s = (SyncedSource *)game_alloc(sizeof(SyncedSource) + text.size());
     s->hash = hash;
@@ -69,7 +67,7 @@ static void registry_add(DWORD hash, const std::string &text)
     r->list[r->count++] = s;
 }
 
-// tag hash -> local id (registers a source found only in game memory, e.g. the host's after a sync)
+// Tag hash -> local id (registers a source found only in game memory, e.g. the host's after a sync).
 static DWORD resolve(DWORD hash)
 {
     AcquireSRWLockShared(&g_shader_lock);
@@ -130,6 +128,7 @@ static XgBuffer *make_buffer(DWORD size)
     return b;
 }
 
+// Instruction lines in shader source (comments and directives skipped).
 static int count_instructions(const std::string &src)
 {
     int n = 0;
@@ -153,6 +152,7 @@ static int count_instructions(const std::string &src)
     return n;
 }
 
+// Dump the source to shaders\vs_NNN.txt / ps_NNN.txt.
 static void save_source(DWORD id, bool pixel, const std::string &src)
 {
     char path[MAX_PATH];

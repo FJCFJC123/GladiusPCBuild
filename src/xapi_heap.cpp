@@ -1,11 +1,6 @@
-// XAPI heap -> Windows heap. Xbox XAPI carries its own copy of the NT Rtl heap; the CRT calls both the
-// Win32-style wrappers and the Rtl functions directly. Same signatures/semantics as Windows.
-//
-// [debug] PageHeap=1: game blocks from the process heap instead get their own pages in one reserved region
-// (block at the end of its pages, an uncommitted guard page after it). A free decommits the pages and the
-// region is never reused, so any later touch of freed game memory faults at the culprit; the crash log then
-// names the block (size, allocating and freeing game stacks) via pageheap_describe(). Double frees are logged
-// and ignored. When the region is used up, allocations fall back to the process heap.
+// XAPI / Rtl heap -> Windows heap (or the memory container).
+// [debug] PageHeap=1: each game block gets its own pages with a guard page after it; freed pages are decommitted and
+// never reused, so use-after-free and overruns fault at the culprit (pageheap_describe names the block).
 #include "port.h"
 #include "xbe_addrs.h"
 #include "memstats.h"
@@ -27,6 +22,7 @@ static int g_ph_logged;
 
 static bool ph_owns(const void *p) { return (uintptr_t)p >= g_ph_base && (uintptr_t)p < g_ph_end; }
 
+// Reserve the page heap region when [debug] PageHeap=1.
 void pageheap_init(const char *ini)
 {
     if (!GetPrivateProfileIntA("debug", "PageHeap", 0, ini))
@@ -53,6 +49,7 @@ void pageheap_init(const char *ini)
              (unsigned)g_ph_end);
 }
 
+// Page heap block: ends right at its guard page.
 static void *ph_alloc(SIZE_T size, const void *sp)
 {
     SIZE_T rounded = (size + 15) & ~(SIZE_T)15;
@@ -92,6 +89,7 @@ static SIZE_T ph_size(const void *p)
     return s;
 }
 
+// Page heap free: decommit the pages; double / unknown frees are logged and ignored.
 static BOOL ph_free(const void *p, const void *sp)
 {
     uint32_t stack[8];
@@ -122,9 +120,7 @@ static BOOL ph_free(const void *p, const void *sp)
     return TRUE;
 }
 
-// Shrinks stay in place, like the Xbox / NT heap: the engine's tracked heap (0x1762A0..0x176308) shrinks a block
-// with CRT realloc 0x27526E and IGNORES the returned pointer (its list keeps the old address). Growing in place
-// fails (only asked for with HEAP_REALLOC_IN_PLACE_ONLY; a plain grow moves).
+// Page heap resize: shrinks stay in place (the engine ignores the pointer realloc returns); grows fail.
 static bool ph_resize_in_place(const void *p, SIZE_T size)
 {
     AcquireSRWLockExclusive(&g_ph_lock);
@@ -136,7 +132,7 @@ static bool ph_resize_in_place(const void *p, SIZE_T size)
     return ok;
 }
 
-// crash log: which game block a faulting address belongs to (block = the last one starting at or before it)
+// Crash log: which page heap block a faulting address belongs to.
 void pageheap_describe(uintptr_t addr)
 {
     if (!g_ph_on || addr < g_ph_base || addr >= g_ph_end)
@@ -163,8 +159,7 @@ void pageheap_describe(uintptr_t addr)
     ReleaseSRWLockShared(&g_ph_lock);
 }
 
-// The game sees container_fake_heap() as its process heap when the container is on (same value on every PC);
-// Windows calls get the real one.
+// With the container on, the game's process heap is container_fake_heap(); Windows calls get the real one.
 static HANDLE real_heap(HANDLE heap) { return heap == container_fake_heap() ? GetProcessHeap() : heap; }
 static bool use_ctr(HANDLE heap) { return container_on() && heap == GetProcessHeap(); }
 static bool use_ph(HANDLE heap) { return g_ph_on && heap == GetProcessHeap(); }
@@ -292,11 +287,8 @@ void *__stdcall xapi_RtlReAllocateHeap(HANDLE heap, DWORD flags, void *p, SIZE_T
             memset((char *)n + old, 0, size - old);
         raw_free(heap, flags, p, sp);
     } else if (old != (SIZE_T)-1 && size <= old) {
-        // Shrink in place, as on the Xbox. The engine's tracked heap (0x1762A0..0x176308) shrinks blocks with CRT
-        // realloc and ignores the returned pointer; the Windows low-fragmentation heap MOVES small blocks to a
-        // smaller size class on shrink and frees the old one -> the engine's list kept pointing at memory that
-        // D3D11 then reused (crash at 0x176A5E, 2026-10-05/06 dumps). If the heap cannot shrink in place, the
-        // block simply stays as it is (a larger block is harmless).
+        // Shrink in place, as on the Xbox: the engine's tracked heap ignores the pointer realloc returns, and the Windows
+        // low-fragmentation heap would move small blocks. If it can't shrink in place the block stays larger.
         n = HeapReAlloc(heap, flags | HEAP_REALLOC_IN_PLACE_ONLY, p, size);
         if (!n)
             n = p;

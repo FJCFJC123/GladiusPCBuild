@@ -1,7 +1,6 @@
-// Controllers through SDL2's GameController API (SDL2.dll next to the exe, loaded at runtime): Xbox/XInput,
-// PlayStation 3/4/5, Switch Pro and anything in SDL's mapping database share one layout. All SDL calls run on one
-// input thread (init, event pump, hot-plug, rumble); the game reads per-player snapshots in XInput layout.
-// Without SDL2.dll the caller falls back to plain XInput.
+// Controllers through SDL2's GameController API (SDL2.dll, loaded at runtime): Xbox, PlayStation, Switch Pro and
+// anything in SDL's database share one layout. All SDL calls run on one input thread; the game reads per-player
+// snapshots in XInput layout. Without SDL2.dll the caller falls back to XInput.
 #include "port.h"
 #include "input_sdl.h"
 #include <tlhelp32.h>
@@ -63,13 +62,12 @@ static SRWLOCK g_lock = SRWLOCK_INIT;
 static volatile LONG g_count;
 static bool g_ok;
 
-// Skipped devices: [input] IgnoreControllers=name;name (case-insensitive substrings), plus the DS4Windows mirror:
-// DS4Windows (and similar tools) re-publish a PlayStation pad as a virtual "Xbox 360 Controller", so one physical
-// pad would be two players. While DS4Windows runs and a real PlayStation pad is visible, the virtual 360 pads are
-// skipped ([input] SkipDS4WindowsMirror=0 to keep them). If DS4Windows hides the real pad, the mirror is all there is.
+// Skipped devices: [input] IgnoreControllers=name;name (substrings), plus DS4Windows' virtual "Xbox 360 Controller"
+// copy of a PlayStation pad while the real pad is visible ([input] SkipDS4WindowsMirror=0 keeps it).
 static char g_ignore[256];
 static bool g_skip_mirror = true;
 
+// Case-insensitive substring test.
 static bool name_has(const char *name, const char *sub)
 {
     if (!name || !sub || !*sub)
@@ -87,6 +85,7 @@ static bool is_playstation(const char *name)
            name_has(name, "DualShock") || name_has(name, "Sony");
 }
 
+// Is DS4Windows running? (checked at most every 2 s)
 static bool ds4windows_running()
 {
     static DWORD tick;
@@ -106,6 +105,7 @@ static bool ds4windows_running()
     return running;
 }
 
+// True for devices to skip (ignore list, or a DS4Windows mirror when mirror_rule is on).
 static bool ignored(const char *name, bool mirror_rule)
 {
     char list[256];
@@ -119,6 +119,7 @@ static bool ignored(const char *name, bool mirror_rule)
     return mirror_rule && name_has(name, "Xbox 360 Controller");
 }
 
+// Open newly attached controllers into free player slots, dropping skipped ones.
 static void open_new()
 {
     int n = sdl.NumJoysticks();
@@ -127,7 +128,6 @@ static void open_new()
         sony |= sdl.IsGameController(i) && is_playstation(sdl.NameForIndex(i));
     bool mirror_rule = g_skip_mirror && sony && ds4windows_running();
     static int logged_skip[16], nlogged;
-    // a mirror opened before the real pad showed up: release its slot
     for (int slot = 0; slot < 4; slot++) {
         Player &p = g_players[slot];
         if (p.gc && ignored(sdl.Name(p.gc), mirror_rule)) {
@@ -179,6 +179,7 @@ static void open_new()
 
 static short neg(short v) { return v == -32768 ? 32767 : (short)-v; }
 
+// Read every open controller into its player snapshot and send rumble.
 static void poll()
 {
     LONG count = 0;
@@ -217,7 +218,7 @@ static void poll()
         }
         WORD lo = p.rumble_lo, hi = p.rumble_hi;
         ReleaseSRWLockExclusive(&g_lock);
-        // rumble: resend on change, and keep a running effect alive (SDL effects have a duration)
+        // rumble: resend on change and keep a running effect alive (SDL effects expire)
         DWORD now = GetTickCount();
         if (sdl.Rumble && (lo != p.sent_lo || hi != p.sent_hi || ((lo || hi) && now - p.rumble_tick > 400))) {
             sdl.Rumble(p.gc, lo, hi, (lo || hi) ? 500 : 0);
@@ -228,10 +229,10 @@ static void poll()
     InterlockedExchange(&g_count, count);
 }
 
+// Input thread: SDL init, then pump events, hot-plug and poll at ~250 Hz.
 static DWORD WINAPI input_thread(void *)
 {
-    // before SDL_Init: keep reading pads while the game window is not SDL's / not focused, and enable the
-    // PlayStation drivers that are opt-in on Windows
+    // before SDL_Init: read pads in the background and enable the opt-in PlayStation drivers
     char ini[MAX_PATH];
     GetModuleFileNameA(nullptr, ini, MAX_PATH);
     strcpy(strrchr(ini, 0x5C) + 1, port_ini_name());
@@ -239,8 +240,7 @@ static DWORD WINAPI input_thread(void *)
     g_skip_mirror = GetPrivateProfileIntA("input", "SkipDS4WindowsMirror", 1, ini) != 0;
     sdl.SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
     sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS3", "1");
-    // Xbox pads through XInput/WGI, not raw HID: Steam's "Xbox Controller Enhanced Features" driver claims the
-    // Xbox One controller's HID interface, so a HIDAPI/RawInput-opened Xbox pad is detected but never reports input
+    // Xbox pads through XInput / WGI: Steam's Xbox driver claims the HID interface, and a HID-opened pad never reports input
     sdl.SetHint("SDL_JOYSTICK_HIDAPI_XBOX", "0");
     sdl.SetHint("SDL_JOYSTICK_RAWINPUT", "0");
     sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS4_RUMBLE", "1");
@@ -264,6 +264,7 @@ static DWORD WINAPI input_thread(void *)
     }
 }
 
+// Load SDL2.dll and start the input thread; false = use XInput.
 bool sdl_input_start()
 {
     static bool tried;

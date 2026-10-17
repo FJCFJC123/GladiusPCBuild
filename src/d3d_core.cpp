@@ -1,4 +1,4 @@
-// Xbox D3D8 -> D3D11 shim, R0: window, device, swap chain, push-buffer capture, frame present.
+// Xbox D3D8 -> D3D11 shim core: window, device, swap chain, post chain and final pass, push-buffer capture, present.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include "overlay.h"
@@ -29,7 +29,7 @@ static BOOL CALLBACK init_d3d_cs(PINIT_ONCE, PVOID, PVOID *)
 extern "C" volatile DWORD g_d3d_owner = 0;             // watchdog
 static int g_d3d_depth;
 
-// A thread that has to wait for the device gives up the CRI lock meanwhile, so D3D <-> CRI cannot deadlock.
+// Take the D3D lock. A thread waiting for it gives up the CRI lock meanwhile, so D3D and CRI can't deadlock.
 void d3d_lock()
 {
     InitOnceExecuteOnce(&g_d3d_once, init_d3d_cs, nullptr, nullptr);
@@ -62,8 +62,8 @@ static volatile LONG g_pending_w, g_pending_h;
 static bool g_borderless;
 static WINDOWPLACEMENT g_windowed_placement = {sizeof g_windowed_placement};
 static DWORD g_windowed_style;
-// soft-reboot handoff (reboot.cpp): the new process opens its window hidden where the old one was and shows it on
-// its first frame, then signals the old process to exit
+// soft-reboot handoff (reboot.cpp): the new process opens its window hidden where the old one was, shows it on its
+// first frame, then signals the old process to exit
 static HANDLE g_handoff_ev;
 static RECT g_handoff_rect;
 static int g_handoff_show;
@@ -256,7 +256,7 @@ static DWORD WINAPI window_thread(void *)
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    // the exe's icon (tools/xbe2pe.py: the XBE title image, group 1); exes converted without one keep the default
+    // the exe's icon (the XBE title image, written by xbe2pe.py); exes converted without one keep the default
     wc.hIcon = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
                                  GetSystemMetrics(SM_CYICON), 0);
     wc.hIconSm = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
@@ -672,8 +672,7 @@ float4 ps(V i) : SV_Target
 )";
 
 // ---------------------------------------------------------------- post chain (scene -> effects -> final pass)
-// [video] AntiAlias=fxaa: FXAA 3.11-style edge AA at scene resolution into g_post_tex; the final pass then scales
-// that to the window. Further effects (bloom, SSAO) slot in here the same way.
+// [video] AntiAlias=fxaa: FXAA 3.11-style edge AA at scene resolution into g_post_tex, then scaled by the final pass.
 static ID3D11PixelShader *g_fxaa_ps;
 static ID3D11Texture2D *g_post_tex;
 static ID3D11RenderTargetView *g_post_rtv;
@@ -1006,8 +1005,7 @@ void d3d_present()
     if (!g_d3d.swap)
         return;
     d3d_apply_resize();
-    // frame timing: "cpu" = previous Present's return -> this Present (game + draw submission on the game thread),
-    // "present" = time blocked in Present (vsync / GPU still busy with earlier frames)
+    // frame timing: "cpu" = game + draw submission since the last Present returned, "present" = time blocked in Present
     static LARGE_INTEGER qpf, prev_end;
     static double cpu_sum, cpu_max, pres_sum, pres_max;
     static DWORD draw_sum, draw_max, timed;
@@ -1229,9 +1227,8 @@ struct XVBlankData {
 };
 static DWORD g_fake_device[64];                       // D3D_g_pDevice target (engine reads no fields)
 
-// VBlank source: the Xbox video interrupt fires at the TV rate and calls the game's VBlank callback; engine and
-// Sofdec movie playback pace themselves on it (BlockUntilVerticalBlank, callback counters). A timer thread
-// provides it at 59.94 Hz. Game-logic timing signal only - presentation/render rate are independent of it.
+// VBlank: the engine and Sofdec movies pace themselves on the Xbox video interrupt. A timer thread provides it at
+// 59.94 Hz; rendering and presentation don't depend on it.
 static HANDLE g_vblank_event;
 static volatile LONG g_vblank_count;
 extern "C" volatile LONG g_swap_count = 0;

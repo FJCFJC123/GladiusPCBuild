@@ -1,11 +1,6 @@
-// CRI middleware (Sofdec/ADX) lock. On Xbox CRI "locks" by raising the current thread to TIME_CRITICAL priority
-// (0x22C7E0 -> callback [0x567AA0]) and "unlocks" by restoring a single global saved priority (0x22C800 ->
-// [0x567AA8]). On the single-core Xbox that means: while the holder *runs*, nothing else does - but when the
-// holder sleeps or waits, other threads run. With several cores the priority trick excludes nothing, CRI
-// threads race and the shared saved priority gets clobbered ("E02082301 : force unlocked" halt).
-//
-// Replacement with the same semantics: a recursive mutex that its owner gives up whenever it blocks (every
-// wait/sleep entry point calls port_lock_suspend/port_lock_resume). Thread priorities are left alone.
+// CRI middleware (Sofdec/ADX) lock. On the single-core Xbox, CRI locks by raising thread priority, which excludes
+// nothing on a multi-core PC. Replaced by a recursive mutex that its owner releases whenever it blocks
+// (port_lock_suspend / port_lock_resume around every wait).
 #include "port.h"
 
 static CRITICAL_SECTION g_cri_lock;
@@ -40,7 +35,7 @@ void __cdecl cri_Unlock()
 
 }
 
-// Around a blocking call: release the CRI lock completely, return the depth to restore afterwards.
+// Before a blocking call: release the CRI lock completely and return the depth to restore.
 int port_lock_suspend()
 {
     int depth = t_cri_depth;
@@ -52,6 +47,7 @@ int port_lock_suspend()
     return depth;
 }
 
+// After a blocking call: take the lock back to `depth`.
 void port_lock_resume(int depth)
 {
     for (int i = 0; i < depth; i++)
@@ -61,10 +57,8 @@ void port_lock_resume(int depth)
         g_cri_owner = GetCurrentThreadId();
 }
 
-// Priority exclusion. On the single core a thread above normal priority (CRI servers at 1-2, code that boosts
-// itself to TIME_CRITICAL) runs without interruption by normal-priority threads until it blocks, and the CRI
-// libraries rely on it (server loops read state the main thread changes inside its lock). Such a thread holds
-// one extra level of the CRI lock while it runs; blocking calls give it up and take it back like any level.
+// Threads above normal priority ran uninterrupted on the Xbox until they blocked, and CRI relies on it. Such a
+// thread holds one extra level of the CRI lock while it runs.
 static __declspec(thread) bool t_elevated;
 
 void port_set_elevated(bool on)

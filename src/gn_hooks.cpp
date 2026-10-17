@@ -1,23 +1,13 @@
-// Xbox default.xbe hooks for the frame and deterministic mode (replaces the Protius patch.py netplay hooks).
-//
-// Frame hook: the main update (0x1CD457) polls the pads with call 0x183360 at 0x1CD5BF; that call
-// comes here first: this machine's controllers are sampled into g_pads, gladiusnet.dll (online versus,
-// gladiusnet_api.h) exchanges them or the record / replay harness (gn_core.cpp) records / replays them,
-// and the XInput layer returns g_pads to the engine for the frame. The save screen pages, the God Camera
-// and the editor run from here too - with or without gladiusnet.dll.
-//
-// Deterministic mode (g_det, set by det_enter while a session or harness run is active):
-//   time_Update 0x18EC20   honours time_OverrideEnabled 0x49C2B4 / time_DeltaOverride 0x49C2B0
-//                          (engine built-in, fixed 1/60); RealDelta 0x49C214 forced to 1/60 too
-//                          (state fades 0x20FAE, input repeat timers, RealClock)
-//   SinceFrameStart 0x18EDC0  real time since the frame began - every DogTime::GetTime (script
-//                          waits) adds it to time_clock -> 0
-//   UnitAIScope::Update 0xE3160  think loop runs UnitAI::Update 0xE2C80 until 4.5 ms real time
-//                          ([0x37CDB4] = 45 x 100 us) -> fixed iterations; its 30 s give-up
-//                          accumulator 0x4162DC gets a fixed 4 ms per frame
-//   stream reader 0x4FCA00 every enqueue (0x1FD850) waits until the reader thread is idle
-//   decompressor 0x526EF0  read completions (0x1C8BA0) hand the data to a second worker (thread
-//                          0x2105B0, enqueue 0x2104B0, callback 0x1C86C0) -> also waited for
+// Xbox default.xbe hooks for the frame and deterministic mode.
+// Frame hook: the engine's pad poll (call 0x183360 at 0x1CD5BF) comes here first; controllers are sampled, then
+// gladiusnet.dll exchanges them or the harness records / replays them. The save screen pages, the God Camera and the
+// editor run from here too.
+// Deterministic mode (det_enter while a session or harness run is active):
+//   time_Update 0x18EC20       fixed 1/60 delta (engine override 0x49C2B4 / 0x49C2B0); RealDelta 0x49C214 too
+//   SinceFrameStart 0x18EDC0   real time since the frame began -> 0
+//   UnitAIScope::Update 0xE3160  AI think loop: fixed iterations instead of 4.5 ms of real time
+//   stream reader 0x4FCA00     reads drained in the I/O gate (gn_core.cpp)
+//   decompressor 0x526EF0      completions handed to worker 0x2105B0: also drained
 #include "gn.h"
 #include "gladiusnet_api.h"
 #include "handles.h"
@@ -80,8 +70,8 @@ static void __cdecl ai_log_real(uint32_t iterations)    // calibration: real-tim
 
 static uint32_t g_aiStartCount;
 
-// replaces 0xE31A1..0xE31CB (loop + elapsed); ebp = slice budget, esi = ticks per 100 us,
-// edi = start ticks, bl = NotDone; [esp+0x38] = ticks per ms, [esp+0x2C/0x30] = elapsed
+// Replaces 0xE31A1..0xE31CB (loop + elapsed): ebp = slice budget, esi = ticks per 100 us, edi = start ticks,
+// bl = NotDone; [esp+0x38] = ticks per ms, [esp+0x2C/0x30] = elapsed.
 static __declspec(naked) void ai_loop()
 {
     __asm {
@@ -164,9 +154,9 @@ static __declspec(naked) void since_frame_start()
     }
 }
 
-// jmp at 0x1FD850 (StreamManager enqueue, thiscall(cmd), ret 4). Must NOT wait for the read here: callers
-// write their own "loading" state after the enqueue returns (see the I/O gate in gn_core.cpp).
-// game-code return addresses on the stack (a call instruction right before them): the read's issuers
+// jmp at 0x1FD850 (StreamManager enqueue). Must not wait for the read here: callers set their own "loading" state
+// after the enqueue returns (see the I/O gate in gn_core.cpp).
+// Game return addresses on the stack (the read's issuers), for the trace.
 static void stack_callers(char *out, int n)
 {
     const uint32_t *sp = (const uint32_t *)_AddressOfReturnAddress();
@@ -197,7 +187,7 @@ static void __cdecl after_enqueue(uint32_t caller, int front, const uint8_t *cmd
            *(const uint32_t *)(m + 0x34), *(const int32_t *)(m + 0x18 + 0x10), *(const uint32_t *)(m + 0x18 + 0x18));
 }
 
-// I/O threads: no work outside the gate while deterministic (gn_core.cpp io_wait / main thread sleeping)
+// I/O threads: no work outside the gate while deterministic
 extern volatile LONG g_ioWindow;
 int port_lock_suspend();
 void port_lock_resume(int depth);
@@ -236,7 +226,7 @@ static __declspec(naked) void enqueue_hook()
     }
 }
 
-// jmp at 0x1FD8C0 (StreamManager enqueue at the FRONT of the queue - async package reads via 0x1FD930)
+// jmp at 0x1FD8C0 (enqueue at the front of the queue: async package reads)
 static __declspec(naked) void enqueue_front_original()
 {
     __asm {
@@ -264,9 +254,8 @@ static __declspec(naked) void enqueue_front_hook()
     }
 }
 
-// the reader thread's wait (call at 0x1FDAA1) and its completion APC (pushed at 0x1FD5C7)
-// The I/O threads read their queue's event handle before this call; if a state sync rebuilt the handle table
-// while they were parked in the I/O gate, that number now means another object - go round the loop instead.
+// The reader thread's wait (call 0x1FDAA1) and completion APC (0x1FD5C7). If a state sync rebuilt the handle table
+// while they were parked, their event handle is stale: go round the loop instead.
 LONG vh_epoch();
 static DWORD __stdcall stream_wait(HANDLE h, DWORD ms, BOOL alertable)
 {
@@ -288,7 +277,7 @@ static DWORD __stdcall stream_wait(HANDLE h, DWORD ms, BOOL alertable)
     return r;
 }
 
-// the decompression worker's wait (call at 0x210618)
+// The decompression worker's wait (call 0x210618).
 static DWORD __stdcall decomp_wait(HANDLE h, DWORD ms, BOOL alertable)
 {
     typedef DWORD(__stdcall * WaitFn)(HANDLE, DWORD, BOOL);
@@ -312,13 +301,9 @@ static void __stdcall stream_apc(DWORD err, DWORD bytes, void *ov)
     InterlockedDecrement(&g_streamApc);
 }
 
-// ── synthetic clock ───────────────────────────────────────────────────
-// The engine's tick readers 0x18E8D0 / 0x18E900 (QueryPerformanceCounter, or GetTickCount) feed real-time
-// decisions in game logic: save/load message minimum times, random real-time timers that roll the gameplay
-// RNG (0x166E90), the loading screen's redraw throttle (0x193500)... each lands on a different frame per
-// machine. In deterministic mode the MAIN thread reads a synthetic clock instead: start + session frame *
-// (frequency / 60), advancing a little on every read (so waits still finish), never going backwards. Other
-// threads (VBlank, audio, movies) keep real time.
+// Synthetic clock: the engine's tick readers (0x18E8D0 / 0x18E900) feed real-time decisions in game logic. In
+// deterministic mode the main thread reads start + frame * (frequency / 60), advancing slightly per read and never
+// backwards. Other threads (VBlank, audio, movies) keep real time.
 bool gn_is_main_thread();
 static uint64_t g_synthNow, g_synthStart;
 static uint32_t g_synthFrame0;
@@ -358,10 +343,8 @@ static __declspec(naked) void ticks_hook()
     }
 }
 
-// ── package load diagnostics ──────────────────────────────────────────
-// Data package loads (0x1AE630 async, callback 0x1E5B20(req, req, loader)) finish only when the request's
-// running total (req[2]) equals the size of the read that just completed (req[1]): a package that arrives
-// in two reads never reaches loader state 2 and anything waiting on it (skill skirmish LOADING) hangs.
+// Package load diagnostics: a package load (0x1AE630, callback 0x1E5B20) only finishes when the request's running
+// total (req[2]) equals the last read's size (req[1]); one that arrives in two reads would hang its waiters.
 static int g_pkgCalls, g_pkgOdd;
 namespace pkgdiag { void on_loaded(const uint8_t *loader, uint32_t size); void install(); }
 
@@ -423,8 +406,7 @@ static void __cdecl pad_poll_hook()
     port_editor_frame();
 }
 
-// gladiusnet.dll next to gladius.exe ([net] Netplay=1): checked against GLADIUSNET_ABI; one built for another
-// gladiusport.dll fails to load (missing imports) or reports another ABI - the game then runs offline.
+// Load gladiusnet.dll from next to gladius.exe and check its ABI; any mismatch means the game runs offline.
 static const GnNetApi *load_netplay()
 {
     char path[MAX_PATH];
@@ -453,6 +435,7 @@ static const GnNetApi *load_netplay()
 }
 
 // ── install ─────────────────────────────────────────────────────────────
+// True when the bytes at va match the hex string.
 static bool expect(uint32_t va, const char *hex)
 {
     const uint8_t *p = (const uint8_t *)va;
@@ -475,12 +458,9 @@ static void put_rel(uint32_t va, uint8_t op, const void *target, int len)
     for (int i = 5; i < len; i++) p[i] = 0x90;
 }
 
-// Exact reciprocals. Game logic (and one engine site) computes 1/x as rcpps + one Newton step
-// (r = rcpps(a); a *= r*r; result = 2r - a). rcpps is an approximation whose low bits differ between CPU
-// vendors/families (both Xboxes had the same Pentium III), so results drift between netplay machines. Each site's
-// first 6 bytes (rcpps T,A + mulps A,T) become `call stub; nop`: the stub sets T = 1.0 / A exactly (divps) and
-// does the displaced mulps; the rest of the original sequence still runs, now on IEEE-exact inputs only.
-// No flags are touched (rcpps/mulps/divps/movaps/call/ret leave EFLAGS alone); masked SSE exceptions as before.
+// Exact reciprocals: game logic computes 1/x with rcpps + a Newton step, and rcpps' low bits differ between CPU
+// families, so results drift between netplay machines. Each site's rcpps + mulps becomes a call to a stub doing an
+// exact divps plus the displaced mulps. Flags are untouched.
 static __declspec(align(16)) const float k_ones[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 
 static __declspec(naked) void rcp_t1_a0()               // rcpps xmm1,xmm0 ; mulps xmm0,xmm1
@@ -511,8 +491,7 @@ static __declspec(naked) void rcp_t4_a2()               // rcpps xmm4,xmm2 ; mul
     }
 }
 
-// Trace: every screen-fade start (0x184000, cdecl(float seconds)) with the game return addresses above it, so
-// a trace diff shows which code started a fade on a different frame. Prologue movss xmm2,[esp+4] is displaced.
+// Trace: every screen-fade start (0x184000) with its game callers, so a trace diff shows who started a fade.
 static void __cdecl fade_trace(const uint32_t *sp)
 {
     char st[96];

@@ -1,5 +1,4 @@
-// Deterministic-mode / netplay shared declarations - GladiusPort build (Xbox default.xbe addresses). Used by
-// gladiusport.dll (gn_core.cpp, gn_hooks.cpp) and gladiusnet.dll. Cloned from ProtiusBuildMerged\gladiusnet.
+// Deterministic-mode / netplay declarations shared by gladiusport.dll (gn_core.cpp, gn_hooks.cpp) and gladiusnet.dll.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
@@ -51,8 +50,7 @@ void dtrace(const char *fmt, ...);     // session trace line (no-op outside a se
 extern GP_DATA volatile uint32_t g_dtraceFrame;
 void io_wait();                     // all DataStream async reads finished (deterministic mode)
 
-// x87 control word: every machine must run the simulation with identical precision/rounding
-// (D3D sets single precision at CreateDevice/Reset; a resized window may differ).
+// x87 control word: every machine runs the simulation with identical precision / rounding (D3D may change it).
 extern GP_DATA uint16_t g_sessionCw;        // enforced control word: host's value at session start
 static inline uint16_t fpu_get()
 {

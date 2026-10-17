@@ -1,7 +1,6 @@
-// XAPI file I/O -> Windows. Same Win32 signatures (OVERLAPPED, WIN32_FIND_DATAA, completion routines);
-// Xbox drive letters are mapped to PC folders (gladiusport.ini next to the exe):
-//   D:  game disc  -> GameDir (default: exe folder)
-//   T:  title data -> SaveDir\T      U: user data/saves -> SaveDir\U      Z: utility cache -> SaveDir\Z
+// XAPI file I/O -> Windows (same Win32 signatures). Xbox drives map to PC folders (gladiusport.ini):
+//   D: game disc -> GameDir (default: exe folder)   T: title data -> SaveDir\T
+//   U: saves     -> SaveDir\U                       Z: utility cache -> SaveDir\Z
 #include "port.h"
 #include "handles.h"
 #include <set>
@@ -80,7 +79,7 @@ static bool map_path(const char *in, char *out)
         else if (d == 'T' || d == 'U' || d == 'Z') {
             root = g_save_dir;
             sub[0] = 0x5C, sub[1] = d;
-            // a second instance on this PC (netplay test, -gnpad=N) keeps its own cache: Z<N>
+            // a second instance on this PC (-gnpad=N) keeps its own cache: Z<N>
             static int inst = -1;
             if (inst < 0) { const char *p = strstr(GetCommandLineA(), "-gnpad="); inst = p ? atoi(p + 7) : 0; }
             if (d == 'Z' && inst > 0 && inst < 10) sub[2] = (char)('0' + inst);
@@ -101,14 +100,13 @@ static bool map_path(const char *in, char *out)
     return true;
 }
 
-// handles.cpp: re-open a synced file slot through THIS machine's drive mapping
+// handles.cpp: map an Xbox path through this machine's drive mapping
 bool port_map_path(const char *xbox, char *out) { return map_path(xbox, out); }
 
 static int g_open_log = 0;
 
-// Handles opened with FILE_FLAG_OVERLAPPED. The Xbox kernel accepts ReadFileEx/WriteFileEx on *any* handle
-// (synchronous transfer, completion routine queued as an APC afterwards); Windows requires an overlapped
-// handle, so for the others the transfer is done synchronously here and the completion queued the same way.
+// Handles opened with FILE_FLAG_OVERLAPPED. Xbox ReadFileEx / WriteFileEx work on any handle; for the others the
+// transfer runs synchronously and the completion routine is queued as an APC.
 static std::set<HANDLE> g_overlapped_handles;
 static std::set<HANDLE> g_mirror_handles;               // real handles: z:\gladius.bec served from the disc file
 static SRWLOCK g_mirror_lock = SRWLOCK_INIT;
@@ -157,10 +155,8 @@ static void CALLBACK run_completion(ULONG_PTR p)
     HeapFree(GetProcessHeap(), 0, q);
 }
 
-// Every transfer at ov->Offset runs to completion before the call returns, on any handle: Windows must never
-// write into a game buffer after the game has seen the request complete (late kernel writes into freed/reused
-// heap memory corrupted the CRT's per-thread data and the engine's allocation lists). The game still gets its
-// normal completion signals (OVERLAPPED status, event, completion routine), just immediately.
+// Every transfer completes before the call returns: Windows must never write into a game buffer after the game saw
+// the request complete. The game still gets its normal completion signals, just immediately.
 static BOOL complete_transfer(bool write, HANDLE h, void *buf, DWORD n, const OVERLAPPED *at, DWORD *done)
 {
     OVERLAPPED o = {};
@@ -186,7 +182,7 @@ static BOOL complete_transfer(bool write, HANDLE h, void *buf, DWORD n, const OV
     return ok;
 }
 
-// complete the transfer, then queue the completion routine as an APC (Xbox ReadFileEx/WriteFileEx semantics)
+// Complete the transfer, then queue the completion routine as an APC.
 static BOOL sync_transfer_with_apc(bool write, HANDLE h, void *buf, DWORD n, OVERLAPPED *ov,
                                    LPOVERLAPPED_COMPLETION_ROUTINE cb)
 {
@@ -212,12 +208,8 @@ static BOOL sync_transfer_with_apc(bool write, HANDLE h, void *buf, DWORD n, OVE
     return TRUE;
 }
 
-// The engine's hard-disk cache z:\gladius.bec is a same-offset mirror of d:\gladius.bec, filled block by block by
-// the cache writer thread, with a block map (z:\gladius.cba) saying which blocks are there (verified 2026-10-07:
-// every cached chunk is byte-identical to the disc file at the same offset). On PC it is served straight from the
-// disc file: reads return the right bytes whatever the block map claims, writes are dropped. That matters for
-// netplay - a state sync copies the host's block map, which says nothing about the client's own cache file - and
-// it saves the 450 MB copy.
+// The engine's hard-disk cache z:\gladius.bec is a same-offset mirror of d:\gladius.bec. Here it is served straight
+// from the disc file (reads always correct, writes dropped), so a netplay sync of the cache's block map can't break it.
 
 static bool is_mirror(HANDLE h)
 {
@@ -229,8 +221,8 @@ static bool is_mirror(HANDLE h)
 
 extern "C" {
 
-// Real open of an Xbox path (drive mapping, z:\\gladius.bec -> disc file, overlapped bookkeeping). Used by the
-// game's CreateFile below and by handles.cpp when a state sync makes a client reopen the host's files.
+// Real open of an Xbox path (drive mapping, z:\gladius.bec -> disc file, overlapped bookkeeping), also used by
+// handles.cpp to reopen synced files.
 HANDLE port_open_file(const char *name, DWORD access, DWORD share, DWORD disp, DWORD flags, char *mapped)
 {
     char path[MAX_PATH];
@@ -273,8 +265,7 @@ HANDLE __stdcall xapi_CreateFileA(const char *name, DWORD access, DWORD share, S
                  (flags & FILE_FLAG_OVERLAPPED) ? "(async) " : "", path,
                  h == INVALID_HANDLE_VALUE ? "  [NOT FOUND]" : "", h);
     }
-    // the game keeps the number (handles.cpp); the table keeps the XBOX path - each machine maps it itself (install
-    // folders differ between PCs, and two instances on one PC use different Z: caches)
+    // the table keeps the Xbox path: each machine maps it itself
     return vh_new(VH_FILE, h, access, share, flags, name);
 }
 
@@ -285,7 +276,7 @@ static void io_fail(const char *what, HANDLE h, DWORD n)
         port_log("%s(handle %p, %u bytes) failed: error %u\n", what, h, n, GetLastError());
 }
 
-// overlapped ReadFile/WriteFile: completed immediately, results published like a finished async request
+// Overlapped ReadFile / WriteFile: completed immediately, results published like a finished async request.
 static BOOL complete_overlapped(bool write, HANDLE h, void *buf, DWORD n, DWORD *out, OVERLAPPED *ov)
 {
     DWORD done = 0;
@@ -301,7 +292,7 @@ static BOOL complete_overlapped(bool write, HANDLE h, void *buf, DWORD n, DWORD 
     return ok;
 }
 
-// a game OVERLAPPED handed to Windows: its hEvent is virtual - Windows gets a copy with the real one
+// A game OVERLAPPED's hEvent is virtual: Windows gets a copy with the real one.
 static BOOL native_rw(bool write, HANDLE h, void *buf, DWORD n, DWORD *done, OVERLAPPED *ov)
 {
     if (!ov)
@@ -359,7 +350,7 @@ BOOL __stdcall xapi_WriteFile(HANDLE h, const void *buf, DWORD n, DWORD *written
         io_fail("WriteFile", h, n);
     return ok;
 }
-// I/O trace: completion routines are wrapped so each APC delivery is logged (first g_io_trace_max ops)
+// I/O trace: completion routines are wrapped so each APC delivery is logged (first g_io_trace_max ops).
 static int g_io_trace = 0;
 static const int g_io_trace_max = 60;
 struct IoTrace {
@@ -495,9 +486,8 @@ void __stdcall xapi_XapiTouchSaveDirectory(const char *name)
     CloseHandle(h);
 }
 
-// XCreateSaveGame(root, name, disposition, flags, path_out, path_size) (XAPI 0x285645): same branches as the
-// original; the folder name hash (0x28520B) and the SaveMeta.xbx validation (0x285569) are XAPI code that only
-// uses replaced file calls, so they are called in place. The original wrote SaveMeta.xbx via NtCreateFile.
+// XCreateSaveGame (XAPI 0x285645): same branches as the original; its folder name hash (0x28520B) and SaveMeta.xbx
+// check (0x285569) only use replaced file calls, so they are called in place.
 typedef void(__stdcall *SaveDirNameFn)(const wchar_t *name, char *out, int avail);
 typedef DWORD(__stdcall *SaveMetaCheckFn)(const char *meta_path, const wchar_t *name);
 static const SaveDirNameFn xbe_save_dir_name = (SaveDirNameFn)0x28520B;
@@ -644,7 +634,7 @@ BOOL __stdcall xapi_FindNextFileA(HANDLE h, WIN32_FIND_DATAA *fd)
     return ok;
 }
 
-// volume queries on a drive root ("d:\\", "u:\\" ...): answered for the mapped PC folder's volume
+// Volume queries on a drive root ("d:\", "u:\" ...): answered for the mapped folder's volume.
 static bool volume_root(const char *in, char *root)
 {
     char path[MAX_PATH];

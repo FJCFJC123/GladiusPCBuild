@@ -1,8 +1,6 @@
-// Bloom ([video] Bloom = intensity, 0 = off; BloomThreshold): light bleeding around what is brighter than white.
-// With the HDR scene (R16G16B16A16_FLOAT) only overbright light blooms - spell cores, stacked glows, lava, sun glints
-// on armour - not every white wall. Chain: prefilter at half resolution (13-tap downsample + soft-knee threshold),
-// 4 more downsamples (13-tap, "Call of Duty: Advanced Warfare" style), then back up with a 9-tap tent filter added
-// onto each larger level. The final pass (d3d_core.cpp) adds level 0 before tone mapping.
+// Bloom ([video] Bloom = intensity, 0 = off; BloomThreshold) and god rays ([video] GodRays). Only overbright HDR light
+// blooms. Chain: half-resolution prefilter with a soft-knee threshold, 4 more 13-tap downsamples, then 9-tap tent
+// upsamples added onto each larger level. The final pass (d3d_core.cpp) adds level 0 before tone mapping.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
@@ -119,6 +117,7 @@ float4 up(V i) : SV_Target
 }
 )";
 
+// Release the bloom level textures.
 static void release_targets()
 {
     for (int k = 0; k < LEVELS; k++) {
@@ -129,6 +128,7 @@ static void release_targets()
     g_src_w = g_src_h = 0;
 }
 
+// (Re)create the bloom levels for a w x h scene.
 static bool targets(UINT w, UINT h)
 {
     if (g_tex[0] && g_src_w == w && g_src_h == h)
@@ -152,6 +152,7 @@ static bool targets(UINT w, UINT h)
     return true;
 }
 
+// Compile the shaders and create the fixed states (once).
 static bool init()
 {
     if (g_init)
@@ -221,10 +222,9 @@ static bool init()
     return true;
 }
 
-// The visible sun, found in the picture itself (arenas paint it into the sky texture or a dome band - no reliable
-// sprite or light direction for it): sky brightness per cell of a 64 x 36 map, read back two frames later (no
-// stall). A sun = one spot clearly brighter than the rest of the sky; its position = the luminance-weighted centre of
-// the cells near the peak.
+// Find the visible sun in the picture: sky brightness per cell of a 64 x 36 map, read back two frames later (no
+// stall). A sun is one spot clearly brighter than the rest of the sky; its position is the weighted centre of the
+// brightest cells.
 static void find_sun(ID3D11ShaderResourceView *scene)
 {
     ID3D11DeviceContext *ctx = g_d3d.ctx;
@@ -268,8 +268,7 @@ static void find_sun(ID3D11ShaderResourceView *scene)
             peak = lum[k] > peak ? lum[k] : peak;
         }
     }
-    // hysteresis: a sun already shown stays while its spot is 1.2x the sky, a new one needs 1.35x (no on/off flicker
-    // when the camera pans across the threshold); the result drives a fade, not a switch (g_sun_fade)
+    // hysteresis: a shown sun stays at 1.2x the sky, a new one needs 1.35x (no flicker)
     float need = g_sun_fade > 0 ? 1.2f : 1.35f;
     if (geo < 0.15f * SKY_W * SKY_H || cnt < 8 || peak < 0.7f || peak < need * sum / cnt) {
         g_sun_seen = false;                             // no 3D (2D screens are all "sky") / no sky / no bright spot
@@ -295,7 +294,7 @@ static void find_sun(ID3D11ShaderResourceView *scene)
     g_sun_seen = true;
 }
 
-// scene -> bloom texture (half resolution) for the final pass, nullptr when off
+// Scene -> bloom texture (half resolution) for the final pass; nullptr when off.
 ID3D11ShaderResourceView *d3d_bloom_run(ID3D11ShaderResourceView *scene, UINT w, UINT h)
 {
     if (g_d3d.bloom <= 0 || !scene || !init() || !targets(w, h))
@@ -338,7 +337,7 @@ ID3D11ShaderResourceView *d3d_bloom_run(ID3D11ShaderResourceView *scene, UINT w,
         g_sun_fade += g_sun_seen ? 0.08f : -0.05f;
         g_sun_fade = g_sun_fade < 0 ? 0 : g_sun_fade > 1 ? 1 : g_sun_fade;
     }
-    // [video] GodRays: added onto level 0 while a sun is (or was just) visible, scaled by the fade
+    // god rays: added onto level 0 while a sun is (or was just) visible, scaled by the fade
     if (g_d3d.god_rays > 0 && g_d3d.gbuf_srv && g_sun_fade > 0.01f) {
         float fade = g_sun_fade * g_sun_fade * (3 - 2 * g_sun_fade);   // smoothstep
         float cb[8] = {1.0f / w, 1.0f / h, (float)w / h, g_d3d.god_rays / g_d3d.bloom * fade, 0, 0, g_sun_u, g_sun_v};

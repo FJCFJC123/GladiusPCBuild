@@ -717,9 +717,8 @@ std::string translate_ps(const std::string &src, std::vector<std::string> *warni
     if (pp) {
         h << "cbuffer VSConst : register(b0) { float4 c[192]; float4 attr_const[16]; float4 rt_size; float4 vmat; };\n";
         h << "float4 cx(int n) { return c[clamp(n + 96, 0, 191)]; }   // Xbox constant slot\n";
-        // relief from the texture: luminance as height, perturbing the normal with screen-space derivatives of
-        // height and position (Mikkelsen, bump mapping unparametrized surfaces) - no tangents, no extra textures.
-        // k = height in surface units (fx_params.x, [video] Bump)
+        // relief from the texture: luminance as height, normal perturbed with screen-space derivatives (no tangents);
+        // k = height in surface units ([video] Bump)
         h << "float3 bump_normal(float3 N, float3 P, float4 uv, float k)\n"
              "{\n"
              "    float h = dot(sample_stage(0, uv).xyz, float3(0.3, 0.59, 0.11)) * k;\n"
@@ -741,12 +740,10 @@ std::string translate_ps(const std::string &src, std::vector<std::string> *warni
     } else if (pp) {                                   // the vertex shader's lighting, per pixel
         h << "    PIn i = iin;\n";
         h << "    float3 n = iin.ln.xyz; float nl = length(n); if (nl > 0) n *= iin.ln.w / nl;\n";
-        // characters: no relief - skin / cloth / face textures carry painted shading, not height (a fixed height on
-        // a head ~0.3 units wide turned the HD faces blotchy and darkened the painted eyes - 2026-10-10)
+        // characters: no relief (skin / cloth textures carry painted shading, not height)
         h << "    int a = (int)floor(cx(" << lit->first << ").w + 0.5);\n";
         h << "    float4 col = cx(" << lit->emis << ") + cx(a) * cx(" << lit->amb << ");\n";
-        // view vector: the camera in this surface's own space is put in c92 per draw (d3d_program.cpp - the
-        // game's VS_CAMERA_POSITIONDIRECTION_LOCAL slot, never filled by the game)
+        // view vector: the camera in this surface's space, put in c92 per draw (d3d_program.cpp)
         h << "    float3 nn = normalize(n), V = " << (lit->pos.empty() ? std::string("float3(0, 0, 1)")
                                                        : std::string("normalize(cx(92).xyz - iin.lp.xyz)")) << ";\n";
         h << "    float3 lit_spec = 0, lit_key = 0; float lit_keylum = -1;\n";
@@ -787,8 +784,7 @@ std::string translate_ps(const std::string &src, std::vector<std::string> *warni
     h << "    float4 fogv = float4(fog_color.xyz, fog_factor(i.fog)), outc;   // Xbox fog.a = factor (1 = no fog)\n";
     std::string body = cx.body.str();
     if (pp && !rl && lit->env) {
-        // armour reflections (the game's sphere-map texture at stage 1, masked by 1 - t0.a): Fresnel - subtle where
-        // the surface faces the camera, stronger at grazing angles, like metal. The authored lookup stays.
+        // armour reflections (sphere map at stage 1, masked by 1 - t0.a): Fresnel, stronger at grazing angles
         h << "    float env_f = lit_params.w > 0 ? lerp(0.7, 1.6, pow(1 - saturate(dot(nn, V)), 2)) : 1;\n";
         const std::string from = "    t1 = sample_stage(1, i.t1);\n", to = "    t1 = sample_stage(1, i.t1) * env_f;\n";
         size_t at = body.find(from);

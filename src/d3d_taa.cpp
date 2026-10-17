@@ -1,11 +1,6 @@
-// Temporal anti-aliasing ([video] AntiAlias=taa; F9 cycles off / FXAA / TAA).
-// Every 3D draw of a frame is shifted by a sub-pixel offset (Halton 2,3 over 8 frames; the translated vertex shaders
-// add rt_size.zw * w to their clip position, d3d_program.cpp fills it). The 3D image is resolved before the 2D layer
-// is drawn - at the first depth-test-off draw after the engine's 3D effects (fx_render_3d), or at the final pass -
-// so the HUD and text are never smeared: history (last frame's resolved image) is reprojected with the camera motion
-// (G-buffer view depth -> world with this frame's camera -> last frame's screen, matrices from the shadow pass), its
-// colour clamped to the current 3x3 neighbourhood (moving characters do not ghost), and blended 1:9 with the current
-// frame; luminance-weighted so overbright HDR pixels do not dominate. The result replaces the scene colour.
+// Temporal anti-aliasing ([video] AntiAlias=taa; F9 cycles off / FXAA / TAA). 3D draws are jittered by a Halton(2,3)
+// sub-pixel offset over 8 frames. The 3D image is resolved before the 2D layer is drawn, so the HUD never smears:
+// last frame's image is reprojected with the camera motion, clamped to the current 3x3 neighbourhood and blended 1:9.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
@@ -91,6 +86,7 @@ float4 ps(V i) : SV_Target
 }
 )";
 
+// Release the history textures.
 static void release_hist()
 {
     for (int k = 0; k < 2; k++) {
@@ -102,6 +98,7 @@ static void release_hist()
     g_hist_valid = false;
 }
 
+// (Re)create the two history textures at the scene size.
 static bool targets()
 {
     D3D11_TEXTURE2D_DESC sd;
@@ -120,6 +117,7 @@ static bool targets()
     return true;
 }
 
+// Compile the shaders and create the fixed states (once).
 static bool init()
 {
     if (g_init)
@@ -161,6 +159,7 @@ static bool init()
     return true;
 }
 
+// Halton sequence value i in base b.
 static float halton(int i, int b)
 {
     float f = 1, r = 0;
@@ -169,7 +168,7 @@ static float halton(int i, int b)
     return r;
 }
 
-// Present: the next frame's jitter - only when this frame had 3D (menus stay still)
+// Present: pick the next frame's jitter (only when this frame had 3D, so menus stay still).
 void d3d_taa_frame_begin()
 {
     bool on = g_d3d.anti_alias == 2 && g_had_3d && !g_failed;
@@ -187,6 +186,7 @@ void d3d_taa_frame_begin()
     g_jitter[1] = (halton(k, 3) - 0.5f) * 2.0f / g_d3d.scene_height;
 }
 
+// This frame's jitter for the vertex shaders (0 once resolved: the 2D layer is not jittered).
 void d3d_taa_jitter(float *xy)
 {
     xy[0] = g_resolved ? 0 : g_jitter[0];
@@ -200,6 +200,7 @@ void d3d_taa_mark_3d()                                  // fx_render_3d returned
         g_pending = true;
 }
 
+// Resolve: blend the reprojected history into the scene and keep the result as the next history.
 static void resolve()
 {
     g_pending = false;
@@ -261,7 +262,7 @@ static void resolve()
     d3d_state_invalidate();
 }
 
-void d3d_taa_before_draw(bool depth_test)              // d3d_begin_draw: the first 2D draw after the 3D effects
+void d3d_taa_before_draw(bool depth_test)              // first 2D draw after the 3D effects resolves
 {
     if (g_pending && !depth_test)
         resolve();

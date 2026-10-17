@@ -1,7 +1,5 @@
-// Port-side 2D overlay (netplay lobby screens): drawn on the CPU into a premultiplied BGRA buffer in the
-// game's 640x480 coordinates at 2x resolution (GDI renders the text), composited over the back buffer
-// right before Present. The renderer re-applies every pipeline state per draw; only the render target and
-// viewport are saved and restored here.
+// Port-side 2D overlay (editor, lobby screens): drawn on the CPU into a premultiplied BGRA buffer at 2x the game's
+// 640x480 coordinates (GDI text) and composited over the back buffer right before Present.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include "overlay.h"

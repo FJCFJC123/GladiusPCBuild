@@ -1,9 +1,5 @@
-// Game resolution ([video] Resolution = 640x480 | auto | WxH). The engine has 640x480 baked in as immediates and data;
-// default720PFIX.XBE showed every site (2026-10-08: its four extra edits over default720P.XBE - the viewport-constant
-// floats at 0x1CD407 / 0x1CD40C and the 2D centering at 0x1D5D67 / 0x1D5D83 - are what make the 2D fill the frame).
-// Here the same sites get any width / height at startup, before the game runs. 3D needs nothing more: the camera
-// (Camera_BuildViewFrustum 0x1AB030) keeps the vertical extent and widens horizontally (Hor+); 2D maps -1..1 onto the
-// whole frame. Netplay: the screen size lives in game memory too - statesync.cpp keeps those ranges machine-local.
+// Game resolution ([video] Resolution = 640x480 | auto | WxH). The engine hard-codes 640x480; every site that holds
+// it is rewritten at startup. 3D widens horizontally (Hor+); 2D maps -1..1 onto the whole frame.
 #include "port.h"
 #include <string.h>
 #include <stdlib.h>
@@ -11,7 +7,7 @@
 
 UINT g_game_res_w = 640, g_game_res_h = 480;
 
-// 16-bit immediates / int fields (upper half already zero): width (W) or height (H) at the given address
+// 16-bit width (W) / height (H) immediates and fields
 static const struct { DWORD addr; WORD retail; char what; const char *note; } INT_SITES[] = {
     {0x06DC7C, 480, 'H', "startup init"},           {0x06DC81, 640, 'W', "startup init"},
     {0x1BD0AA, 640, 'W', "SetScissors default"},    {0x1BD0AF, 480, 'H', "SetScissors default"},
@@ -28,10 +24,10 @@ static const struct { DWORD addr; WORD retail; char what; const char *note; } IN
     {0x385838, 640, 'W', "mode table"}, {0x38583C, 480, 'H', "mode table"},
     {0x385844, 640, 'W', "mode table"}, {0x385848, 480, 'H', "mode table"},
 };
-// D3D_SetViewportConstants(0, 0, 640.0f, 480.0f, 0, 1.0f) pushes at 0x1CD406 / 0x1CD40B (imm32 floats): the 2D
-// mapping (UI shader c93 / c95). The FIX XBE used 728.0 for a 720 frame; the same 728/720 ratio is kept here.
+// D3D_SetViewportConstants(0, 0, 640.0f, 480.0f, ...) float pushes: the 2D mapping. Height is scaled by 728/720.
 static const DWORD VP_HEIGHT_F = 0x1CD407, VP_WIDTH_F = 0x1CD40C;
 
+// "auto" (desktop size) or "WxH" -> w, h.
 static bool parse_res(const char *s, UINT *w, UINT *h)
 {
     if (!_stricmp(s, "auto")) {
@@ -47,20 +43,13 @@ static bool parse_res(const char *s, UINT *w, UINT *h)
     return *w >= 320 && *h >= 240 && *w <= 8192 && *h <= 8192;
 }
 
-// --- 2D menu particles (the pink petals on Load School / Arenas, the border around the selected versus arena):
-// FX_Render2d (0x851D0) activates s2dCamera (0x3D3050) and runs fx_Render (0x1AF8E0). The 2D UI is authored 4:3 and
-// stretched over the frame (fill, center 16:9), so these particles must be the 640x480 render stretched the same
-// way: s2dCamera gets the 4:3 projection (Camera_BuildViewFrustum 0x1AB030 is Hor+ - halfH = 0.75 f, halfW = halfH *
-// W/H - rebuilt here with halfW = f via FUN_001BC5A0, cdecl l, r, b, t, near, far, out), and sys_aspect (0x4C96CC,
-// W/H, which the sprite quad builders 0x1AFEC0 / 0x2007A0 scale corners by) reads 4/3 while fx_Render runs.
-// Rebuilt every activation because s2dCamera is .data a netplay sync may overwrite.
+// 2D menu particles: FX_Render2d (0x851D0) renders through s2dCamera (0x3D3050). The 2D UI is authored 4:3 and
+// stretched, so these particles get a 4:3 projection and sys_aspect (0x4C96CC) reads 4/3 while they render.
 typedef void(__fastcall *CameraFn)(void *cam, void *edx);
 typedef void(__fastcall *CameraActivateFn)(void *cam, void *edx, int force);
 typedef void(__cdecl *ProjectionFn)(float l, float r, float b, float t, float n, float f, void *out);
 static void *const S2D_CAMERA = (void *)0x3D3050;
-// Every Camera_BuildViewFrustum call goes through here; s2dCamera's result is then redone at 4:3. The full update
-// (Camera_Update 0x1ABD90, run by Camera_Activate when +0x258 is clear) builds the frustum first and the combined
-// matrices from it after, so they all see the 4:3 projection.
+// Every Camera_BuildViewFrustum call goes through here; s2dCamera's projection is then rebuilt at 4:3.
 static const DWORD BUILD_FRUSTUM_CALLS[] = {0x1AB538, 0x1ABD9E, 0x1AC73B, 0x1AC8DB};
 static void __fastcall build_frustum(void *cam, void *edx)
 {
@@ -76,8 +65,7 @@ static void __fastcall build_frustum(void *cam, void *edx)
     ((ProjectionFn)0x1BC5A0)(-hw, hw, -hh, hh, n, far_, c + 0xF0);
 }
 
-// FX_Render2d's Camera_Activate(s2dCamera): force the full update every time (s2dCamera is .data a netplay sync may
-// overwrite with the host's)
+// FX_Render2d's Camera_Activate(s2dCamera): force a full update every time (a netplay sync may overwrite it).
 bool d3d_trace_frame();
 static void __fastcall s2d_activate(void *cam, void *edx, int force)
 {
@@ -87,15 +75,14 @@ static void __fastcall s2d_activate(void *cam, void *edx, int force)
     ((CameraActivateFn)0x1AC960)(cam, edx, force);      // Camera_Activate
 }
 
-// FX::Fire2d (0x86F00) places a 2D emitter from UI pixels (640x448): x = px / 80 - 4, y = ((448 - py) / 56 - 4) * H/W
-// with H/W read from 0x4C96D0 by the mulss at 0x087085 - 0.75 at 640x480, matching the 4:3 particle camera. At any
-// other aspect the emitter lands off the UI (the flourish around the selected versus arena). The operand is pointed
-// at a constant 0.75.
+// FX::Fire2d (0x86F00) places 2D emitters using the screen H/W at 0x4C96D0; point its operand at a constant 0.75 so
+// emitters stay on the 4:3 UI.
 static const float k_fire2d_hw = 0.75f;
 static const DWORD FIRE2D_HW_OPERAND = 0x087089;
 
 typedef void(__cdecl *FxRenderFn)(int arg);
 bool d3d_trace_frame();
+// fx_Render with sys_aspect at 4/3.
 static void __cdecl s2d_fx_render(int arg)
 {
     if (d3d_trace_frame())
@@ -106,11 +93,7 @@ static void __cdecl s2d_fx_render(int arg)
     *sys_aspect = saved;
 }
 
-// --- Movies (SFD): MoviePlay builds its quad with FUN_001D5D40 (thiscall this, verts, w, h; ret 0xC) in 640x480
-// screen pixels - centred ((640 - w) / 2, (480 - h) / 2), 640x480 big, texel UVs. Its 640 / 480 (0x1D5D68 / 0x1D5D84,
-// the FIX XBE's "2D centering") and the 640 / 480 one caller passes (0x1D61D0 / 0x1D61D5) stay retail; the four
-// vertices (stride 0x18 from this+0xEC: x, y) are scaled to the frame afterwards, so the movie fills it the way the
-// 2D UI does (and the way the Protius SFD port draws it: a quad over the whole -1..1 2D canvas).
+// Movies: MoviePlay builds a 640x480 quad (0x1D5D40); scale its four vertices to the frame afterwards.
 typedef void(__fastcall *MovieQuadFn)(void *self, void *edx, void *verts, int w, int h);
 static void __fastcall movie_quad(void *self, void *edx, void *verts, int w, int h)
 {
@@ -123,6 +106,7 @@ static void __fastcall movie_quad(void *self, void *edx, void *verts, int w, int
     }
 }
 
+// Repoint the E8 call at `site` (expected to call expect_target) to fn.
 static bool redirect_call(DWORD site, DWORD expect_target, void *fn, const char *what)
 {
     BYTE *p = (BYTE *)site;
@@ -134,12 +118,8 @@ static bool redirect_call(DWORD site, DWORD expect_target, void *fn, const char 
     return true;
 }
 
-// --- Camera viewport (netplay with different resolutions): a camera keeps its viewport rect in pixels at +0x25C
-// (x, y, w, h); Camera_Activate (0x1AC960) tail-jumps (0x1AC974) to the camera apply 0x1ABFE0, which hands that rect
-// to gfx_SetViewport. Full-screen cameras (+0x286 = 0: frustum from g_ScreenWidth / Height) hold the screen size of
-// the machine that built them - after a netplay state sync the HOST's. A client with a smaller screen then drew the
-// host's 2560-wide view into its own frame (zoomed, half the view and HUD off-screen, 2026-10-10). Before every
-// apply such a camera's rect is reset to this machine's screen.
+// Camera viewport: full-screen cameras (+0x286 = 0) keep their pixel viewport at +0x25C. After a netplay state sync
+// it holds the host's screen size, so reset it to this machine's screen before every apply (0x1ABFE0).
 typedef void(__fastcall *CameraApplyFn)(void *cam, void *edx, int arg);
 static void __fastcall camera_apply(BYTE *cam, void *edx, int arg)
 {
@@ -156,6 +136,7 @@ static void __fastcall camera_apply(BYTE *cam, void *edx, int arg)
     ((CameraApplyFn)0x1ABFE0)(cam, edx, arg);
 }
 
+// Route Camera_Activate's tail jump (0x1AC974) through camera_apply.
 static void install_camera_apply()
 {
     BYTE *p = (BYTE *)0x1AC974;
@@ -166,6 +147,7 @@ static void install_camera_apply()
     *(int32_t *)(p + 1) = (int32_t)((DWORD)camera_apply - (0x1AC974 + 5));
 }
 
+// Apply [video] Resolution / UiMode / UiAspect and install the 2D, particle and movie hooks.
 void port_game_resolution(const char *ini)
 {
     install_camera_apply();                             // also at 640x480: a netplay host may run another size
@@ -192,8 +174,7 @@ void port_game_resolution(const char *ini)
     }
     if (bad)
         return;
-    // [video] UiMode = fill (the whole game at the chosen resolution, 2D stretched over it) | center (the game at
-    // UiAspect - a pillarbox: 3D, 2D and movies share the narrower frame, the final pass centres it with black bars)
+    // UiMode = fill (2D stretched over the frame) | center (pillarbox at UiAspect).
     char mode[16], asp[16];
     GetPrivateProfileStringA("video", "UiMode", "fill", mode, sizeof mode, ini);
     GetPrivateProfileStringA("video", "UiAspect", "4:3", asp, sizeof asp, ini);

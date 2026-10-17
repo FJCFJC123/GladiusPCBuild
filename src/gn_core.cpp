@@ -1,18 +1,8 @@
-// Deterministic-mode core for GladiusPort (the online versus itself is gladiusnet.dll, gladiusnet_api.h) - cloned
-// from ProtiusBuildMerged\gladiusnet\gladiusnet.cpp.
-//
-// Per frame, right before the engine's pad poll (0x183360, called from the main update at 0x1CD5BF),
-// gn_hooks.cpp samples this machine's controllers into ctx.padState; gladiusnet.dll (lockstep exchange) and the
-// record / replay harness here may replace them, and the Xbox XInput layer (xapi_input.cpp) returns padState to
-// the engine for that frame.
-//
-// Determinism harness (Phase 1):
-//   Ctrl+F9   start / stop recording  -> gladiusnet_rec.bin
-//   Ctrl+F10  start / stop replay     <- gladiusnet_rec.bin
-// While a session runs the game is in deterministic mode (*detFlag = 1): fixed time_delta
-// (1/60) and RealDelta, AI think loop -> fixed iterations, DogTime sub-frame real time -> 0,
-// every stream read finished before the frame goes on, frames paced to 60 Hz. The gameplay
-// RNG seed (0x4CA344) is the per-frame sync checksum.
+// Deterministic-mode core (the online versus itself is gladiusnet.dll). Each frame gn_hooks.cpp samples the controllers
+// before the engine's pad poll; gladiusnet.dll or the record / replay harness may replace them.
+// Harness: Ctrl+F9 start / stop recording -> gladiusnet_rec.bin, Ctrl+F10 replay it.
+// In deterministic mode: fixed time deltas, fixed AI iterations, no sub-frame real time, every stream read finished
+// before the frame goes on, frames paced to 60 Hz. The gameplay RNG seed (0x4CA344) is the per-frame sync checksum.
 
 #include "gn.h"
 #include "gladiusnet_api.h"
@@ -80,14 +70,12 @@ void logf(const char *fmt, ...)
     if (const GnNetApi *n = gn_net()) n->remote_log(line);  // a client forwards diagnostics to the host
 }
 
-// Rand() is inlined everywhere in the Xbox build, so there is no per-call tracer. Instead each session
-// writes gladiusnet_trace_{host,client}.txt: one line per session frame (seed, state) plus the I/O events
-// (read issued / completed / sleep drain) - diff the two files to find where a desync started.
+// Session trace gladiusnet_trace_{host,client}.txt: one line per frame (seed, state) plus I/O events; diff the two
+// files to find where a desync started.
 static FILE *g_dtrace;
 static CRITICAL_SECTION g_dtraceCs;
 volatile uint32_t g_dtraceFrame;
-// Guards (2026-10-07: a client stuck in an engine load loop wrote 25 GB of "sleep-drain" and filled the disk):
-// repeats of the same line collapse into one "(xN)" note, and the file stops growing at TRACE_MAX bytes.
+// repeated lines collapse into "(xN)", and the file stops growing at TRACE_MAX bytes
 static const long TRACE_MAX = 512L << 20;
 static char g_dtraceLast[256];
 static uint32_t g_dtraceRepeat;
@@ -185,8 +173,8 @@ bool hotkey(int vk, bool &latch, bool shift)
     return edge;
 }
 
-// Xbox "random pick" RNG (0x2F0B0: 0x3945A4, re-seeded from the tick counter on every call
-// unless the byte at 0x3945A0 is set) - pinned to the session seed while deterministic.
+// Xbox "random pick" RNG (0x2F0B0, re-seeded from the tick counter unless the byte at 0x3945A0 is set): pinned to
+// the session seed while deterministic.
 static uint8_t *const PICK_FIXED = (uint8_t *)0x3945A0;
 static uint32_t *const PICK_SEED = (uint32_t *)0x3945A4;
 static uint32_t *const PICK_INIT = (uint32_t *)0x3945A8;
@@ -218,22 +206,15 @@ void det_leave(GnCtx *c)
     *c->timeDeltaOverride = g_saveDelta;
 }
 
-// ── stream reader idle wait ─────────────────────────────────────────────
-// The engine reads files on its stream thread (manager 0x4FCA00, thread 0x1FDA30): completion
-// timing depends on the disk/cache, so a load could become visible a different number of frames
-// later on each machine. In deterministic mode every read is finished before the enqueue call
-// returns (gn_hooks.cpp hooks 0x1FD850) and before each lockstep frame.
-// Manager: +0 byte request in flight (set when the thread issues ReadFileEx, cleared by the
-// completion APC 0x1FD4E0), +0x18 CRITICAL_SECTION, +0x34 pending queue head. gn_hooks.cpp also
-// tracks when the thread is blocked in its wait and when a completion APC is running.
-// The section is Xbox-format (28 bytes, .data) -> the port's krnl_Rtl* versions, never Windows'.
+// Stream reader idle wait: the engine reads files on its stream thread (manager 0x4FCA00, thread 0x1FDA30). In
+// deterministic mode every read is finished before each lockstep frame. Manager: +0 request in flight, +0x18 Xbox
+// CRITICAL_SECTION, +0x34 pending queue head.
 extern volatile LONG g_streamBlocked, g_streamApc;
 extern "C" void __stdcall krnl_RtlEnterCriticalSection(void *cs);
 extern "C" void __stdcall krnl_RtlLeaveCriticalSection(void *cs);
 static const uintptr_t STREAM_MGR = 0x4FCA00;
 
-// Read completions go on to the decompressor (0x526EF0, same layout: +0xC running, +0x18 CS,
-// +0x34 job queue head; worker 0x2105B0 runs the load callback) -> idle needs both.
+// Read completions go on to the decompressor (0x526EF0, same layout; worker 0x2105B0): idle needs both.
 extern volatile LONG g_decompBlocked;
 static const uintptr_t DECOMP_MGR = 0x526EF0;
 
@@ -256,14 +237,9 @@ static bool io_idle()
     return idle;
 }
 
-// I/O gate (deterministic mode): the stream reader and cache writer threads only work while the main thread
-// is in io_wait - at the start of every frame, and whenever the main thread is about to Sleep/SleepEx (the
-// engine's synchronous load loops, e.g. 0x1AE6D7, sleep until the stream drains). Each of those points drains
-// EVERYTHING outstanding, so what has completed is identical on every machine. A read never completes in the
-// middle of the code that issued it: 0x1E63C0 starts an async package load and only THEN marks the loader
-// "loading" (state 1); a completion before that (state 2) was overwritten and the package never finished
-// (shape-change skills). Merely opening the gate while the main thread slept let completions land on
-// different loop iterations per machine (desync at battle load).
+// I/O gate (deterministic mode): the stream reader and cache writer only work while the main thread is in io_wait -
+// at the start of every frame and whenever it is about to Sleep. Each point drains everything outstanding, so what has
+// completed is identical on every machine, and a read never completes in the middle of the code that issued it.
 volatile LONG g_ioWindow;
 
 bool gn_is_main_thread() { return GetCurrentThreadId() == g_mainThread; }
@@ -298,7 +274,7 @@ void pace()
         if (left <= 0) break;
         if (left > g_qpf.QuadPart / 500) Sleep(1);      // > 2 ms left
     }
-    // don't try to catch up after a long frame (loading / network wait): restart the cadence
+    // no catching up after a long frame (loading / network wait): restart the cadence
     if (now.QuadPart - g_lastFrame.QuadPart > period * 4) g_lastFrame = now;
     else g_lastFrame.QuadPart += period;
 }

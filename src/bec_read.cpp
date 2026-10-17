@@ -1,15 +1,8 @@
-// Direct reads of the game's data for editor tools (no engine file system involved): a loose copy under
-// <game dir>\data wins, else the file comes straight out of gladius.bec.
-//
-// Why not the engine's whole-file loader (0x1AE670): it is a blocking wrapper around the asynchronous file
-// system - it clears the global "load finished" flag 0x37FD98, queues the read and pumps the file service until
-// its callback ran. Called from our frame hook right before a level reload (mesh Save read a .pax + .ptx out of
-// the .bec that way) it left the world map with no retail prop models at all after the reload (2026-10-11).
-//
-// gladius.bec (Xbox, version 3): " ceb", u16 version, u16 alignment, u32 file count, u32 ?, then 16-byte entries
-// sorted by hash: u32 hash, u32 offset, u32 stored size (0 = not compressed; top bit = duplicate), u32 size.
-// hash = table CRC32 (0xEDB88320, no initial / final xor) over the lower-case "data/..." path with '/'.
-// Compressed data is a zlib stream (0x78 first byte).
+// Direct reads of game data for the editor: a loose copy under <game dir>\data wins, else the file is read straight
+// from gladius.bec (the engine's loader can't be used mid-frame without disturbing its async file system).
+// gladius.bec (version 3): " ceb", u16 version, u16 alignment, u32 file count, u32 ?, then 16-byte entries sorted by
+// hash: u32 hash, u32 offset, u32 stored size (0 = uncompressed; top bit = duplicate), u32 size. hash = CRC32 table
+// (no initial / final xor) over the lower-case "data/..." path. Compressed data is a zlib stream.
 #include "port.h"
 #include <string>
 #include <vector>
@@ -161,6 +154,7 @@ struct Inflate {
 };
 }
 
+// Inflate a zlib stream (expect = decompressed size, 0 = any).
 static bool zlib_inflate(const uint8_t *src, size_t len, size_t expect, std::string &out)
 {
     if (len < 2 || (src[0] & 0x0F) != 8) return false;
@@ -171,6 +165,7 @@ static bool zlib_inflate(const uint8_t *src, size_t len, size_t expect, std::str
 }
 
 // ------------------------------------------------------------------------------------------------ bec
+// Read a whole file from disk.
 static bool read_disk(const std::string &path, std::string &out)
 {
     HANDLE f = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -186,6 +181,7 @@ static bool read_disk(const std::string &path, std::string &out)
     return ok;
 }
 
+// The bec's path hash.
 static uint32_t bec_hash(const std::string &key)
 {
     static uint32_t T[256];
@@ -200,7 +196,7 @@ static uint32_t bec_hash(const std::string &key)
     return v;
 }
 
-// key: "data/mesh/misc/x.pax" (any case / slashes). The loose copy first (what the game itself would read).
+// key: "data/mesh/misc/x.pax" (any case / slashes). The loose copy first, then gladius.bec.
 bool port_read_game_file(const std::string &key_in, std::string &out)
 {
     std::string key;

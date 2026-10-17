@@ -59,8 +59,8 @@ DWORD xg_tag_ps(const DWORD *psdef);
 ID3D11ShaderResourceView *d3d_texture_srv(DWORD data, DWORD format, DWORD size);
 // tex_replace.cpp: HD view for this texture, nullptr = none (*pending: still loading, ask again later)
 ID3D11ShaderResourceView *tex_replace_srv(DWORD data, DWORD format, DWORD size, bool *pending);
-DWORD d3d_texel(DWORD data, DWORD format, UINT x, UINT y);
-std::string tex_key(DWORD data, DWORD format);
+DWORD d3d_texel(DWORD data, DWORD format, UINT x, UINT y);   // level-0 texel as BGRA (swizzled / DXT)
+std::string tex_key(DWORD data, DWORD format);   // tex_replace.cpp: asset name of a texture ("" unknown)
 // d3d_shadow.cpp: sun shadow maps from recorded opaque draws
 #include <vector>
 bool d3d_shadows_on();
@@ -81,10 +81,10 @@ void d3d_shadow_install_cull();                         // wider engine culling 
 void d3d_shadow_record(ID3D11VertexShader *vs, ID3D11InputLayout *layout, ID3D11Buffer *const bufs[16],
                        const UINT strd[16], const UINT offs[16], D3D11_PRIMITIVE_TOPOLOGY topo,
                        const std::vector<UINT> &indices, const float *vsc, ID3D11ShaderResourceView *tex0, float aref,
-                       const char *name, bool dynamic, ID3D11Buffer *ib, DWORD consts_gen);   // ib: the indices on the GPU already   // dynamic: never cached (characters)
+                       const char *name, bool dynamic, ID3D11Buffer *ib, DWORD consts_gen);   // ib: indices already on the GPU; dynamic: never cached (characters)
 void d3d_shadow_light(const float *vsc, int first, int nlights, int wv);
 void d3d_shadow_apply();
-void d3d_shadow_frame_end();            // tex_replace.cpp: asset name of a texture ("" unknown)   // level-0 texel as BGRA (swizzled / DXT)
+void d3d_shadow_frame_end();
 void d3d_install_fx_hooks();                           // particle renderer bracket (soft particles)
 void d3d_begin_draw(bool pretransformed, bool soft = false);   // targets + blend/depth/raster from NV2A state;
                                                        // soft: G-buffer as texture t4 instead of a target
@@ -94,8 +94,8 @@ void d3d_stage_set(int stage, DWORD data, DWORD format, DWORD size);
 void d3d_state_invalidate();                           // something else (overlay) changed the bound D3D11 state
 void d3d_scene_targets_changed();                      // scene target size changed: rebuild dependent render state
 
-// D3D entry points are called from several threads (engine, CRI Sofdec server): one recursive lock serializes
-// them (the Xbox D3D library had its own); every d3d_* entry starts with `D3DLock lock;`
+// D3D entry points are called from several threads (engine, CRI Sofdec server); one recursive lock serializes them.
+// Every d3d_* entry starts with `D3DLock lock;`.
 void d3d_lock();
 void d3d_unlock();
 struct D3DLock {
@@ -114,7 +114,7 @@ struct D3DState {
     ID3D11RenderTargetView *present_rtv; // swap-chain render target: final pass / overlay
     UINT width, height;            // game back buffer size (Xbox present parameters)
     UINT game_ss_x = 1, game_ss_y = 1; // Xbox-requested screen-space factors
-    UINT render_scale = 1;         // user scale layered on top of game_ss_*
+    UINT render_scale = 1;         // user render scale on top of game_ss_*
     bool auto_render_scale;        // choose integer render_scale from the window client size
     UINT ss_x = 1, ss_y = 1;       // supersample factors: shader screen space = back buffer size * these
     UINT scene_width, scene_height; // internal scene target size

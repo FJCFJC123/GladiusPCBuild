@@ -14,8 +14,8 @@ void memstats_alloc(int kind, const void *p, size_t size);
 void memstats_free(int kind, size_t size);
 void memstats_tick();                            // watchdog: report every 60 s
 
-// [debug] HeapCheck=1: live set of game process-heap blocks + ring of recent frees with the freeing game stack;
-// the engine's tracked free (0x176A30) refuses blocks that are already free and logs both stacks.
+// [debug] HeapCheck=1: tracks live game heap blocks and recent frees; the engine's tracked free (0x176A30) refuses
+// blocks that are already free.
 bool heapcheck_enabled();
 void heapcheck_alloc(const void *p);
 void heapcheck_free(const void *p);

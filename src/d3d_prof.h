@@ -1,7 +1,5 @@
-// Renderer profiler ([debug] Profile=1 or -gnprof): per-frame CPU time per shim stage (inclusive scoped timers on
-// the TSC), counters, and GPU time from D3D11 timestamp queries split into opaque / blended segments. Every frame is
-// one row of build\perf.csv (perf_padN.csv for a second instance); port.log gets a "prof:" summary each second.
-// Frame wall time = game + shim + present + net wait + pace, so every millisecond is accounted for.
+// Renderer profiler ([debug] Profile=1 or -gnprof): per-frame CPU time per shim stage, counters, and GPU time per
+// pass from timestamp queries. One row per frame in build\perf.csv; port.log gets a "prof:" summary each second.
 #pragma once
 #include <windows.h>
 #include <intrin.h>
@@ -63,8 +61,7 @@ inline void prof_add(int z, unsigned long long ticks) { if (g_prof_on) g_prof_ti
 void prof_init();                       // reads the switch (call once, early)
 void prof_frame_begin_gpu();            // after Present: open this frame's GPU timing
 void prof_gpu_segment(bool blended);    // before each draw: start a new GPU segment when the class changes
-// GPU passes: the game's own draws (opaque / blended / 3D effects) and each port pass get their own segment, so the
-// GPU time splits per pass ("gpu passes" in the prof: line, gpu_<pass>_ms columns in perf.csv)
+// GPU passes: game draws (opaque / blended / 3D effects) and each port pass get their own GPU segment.
 enum GpuPass { GP_OPAQUE, GP_BLEND, GP_FX, GP_SHADOW, GP_SSAO, GP_TAA, GP_BLOOM, GP_FXAA, GP_FINAL, GP_OVERLAY, GP_COUNT };
 void prof_gpu_pass(int pass);            // a port pass starts (the next game draw ends it)
 void prof_frame_end(double wall_ms);    // at Present: close GPU timing, write the row, roll the counters

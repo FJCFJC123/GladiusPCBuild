@@ -1,7 +1,5 @@
-// Xbox D3D8 -> D3D11, R1: render state, textures, fixed-function (FVF) draws.
-//
-// State: the Xbox D3D "simple" render states and the engine's inline push buffers both speak NV2A (Kelvin)
-// methods with GL-style values; everything lands in one NV2A state table (g_nv), from which cached D3D11
+// Xbox D3D8 -> D3D11: render state, textures and fixed-function (FVF) draws. Simple render states and the engine's
+// push buffers both speak NV2A methods; everything lands in one NV2A state table (g_nv), from which cached D3D11
 // blend / depth / rasterizer objects are built at draw time.
 #include "d3d.h"
 #include "d3d_prof.h"
@@ -199,8 +197,8 @@ static void render_init()
     port_log("renderer: shaders and buffers ready\n");
 }
 
-// Bound D3D11 state is tracked so that draws only set what changed; d3d_state_invalidate (after Present: the
-// overlay binds its own state and a flip-model Present unbinds the targets) forces everything to be set again.
+// Bound D3D11 state is tracked so draws only set what changed; d3d_state_invalidate forces a full rebind (after the
+// overlay or a Present unbinds things).
 static struct {
     bool targets, blend, depth, raster;
     bool soft;                                          // targets bound for a soft-particle draw
@@ -457,9 +455,8 @@ static DWORD texel_bgra(DWORD fmt, const BYTE *p)
     return 0xFFFF00FF;
 }
 
-// Movie frames (SFD, YUY2): the frame textures follow the screen size (2560x1080 at Monitor) but the decoder only
-// fills the 640x480 corner the movie quad reads. The draw passes that extent (g_yuv_use_*); only it is converted,
-// and a changed frame is written into the existing texture instead of creating a new one.
+// Movie frames (SFD, YUY2): the frame textures follow the screen size but the decoder fills only the 640x480 corner the
+// movie quad reads. Only that extent is converted, into the existing texture.
 static UINT g_yuv_use_w, g_yuv_use_h;                   // texel extent the current draw reads (0 = whole texture)
 
 static void yuv_extent(UINT w, UINT h, UINT *cw, UINT *ch)
@@ -616,11 +613,8 @@ static ID3D11ShaderResourceView *upload(XPixelContainer *t)
     return srv;
 }
 
-// texture by content (Data address, Format word, Size word): shared by SetTexture (header) and SwitchTexture /
-// push SET_TEXTURE_OFFSET+FORMAT (raw), which bind the same memory without a header
-// Texture memory is pooled: the engine streams new textures into memory a previous one used (file read +
-// Register, no Lock), so the address key alone goes stale. Once per frame a bound texture's level-0 bytes are
-// sampled and compared against the uploaded content.
+// Texture by content (Data address, Format, Size), for SetTexture and raw push binds. Texture memory is pooled and
+// reused without a Lock, so once per frame a bound texture's level-0 bytes are sampled against the uploaded content.
 static DWORD tex_sample_sum(DWORD data, DWORD format, DWORD size)
 {
     DWORD fmt = (format >> 8) & 0xFF;
@@ -857,9 +851,8 @@ static void expand_primitive(DWORD type, UINT count, std::vector<UINT> &idx, D3D
     }
 }
 
-// The engine's particle renderer fx_Render (0x1AF8E0, cdecl 1 arg) for 3D effects - FX_Render3d (0x851A9) and the
-// main pass (0x1CD3B3); 0x851EF is the 2D menu pass. Draws inside are the soft-particle candidates (decals, labels and
-// glass are blended too but must not fade into what they sit on).
+// The engine's particle renderer fx_Render (0x1AF8E0) for 3D effects (FX_Render3d 0x851A9 and the main pass 0x1CD3B3;
+// 0x851EF is the 2D menu pass). Its draws are the soft-particle candidates.
 void d3d_ssao_apply();                                  // d3d_ssao.cpp
 bool d3d_trace_frame();
 static void __cdecl fx_render_3d(int arg)
@@ -1034,9 +1027,8 @@ void __fastcall d3d_D3DDevice_SetRenderState_Simple(DWORD method, DWORD value)
     d3d_nv_method(method & 0x1FFC, &value, 1);
 }
 
-// Generic render-state entry (the engine's material programs set states by D3DRS index). Same dispatch as the
-// Xbox runtime, using its tables in the XBE: simple states -> NV2A method, deferred states -> D3D_g_RenderState +
-// dirty bits (read at draw time), complex states -> the D3DDevice_SetRenderState_* function (patched to ours).
+// Generic render-state entry (by D3DRS index), dispatched like the Xbox runtime using its tables in the XBE: simple
+// states -> NV2A method, deferred states -> D3D_g_RenderState + dirty bits, complex states -> our SetRenderState_*.
 enum : DWORD {
     XBE_RS_SIMPLE_METHODS = 0x342FC0,                     // D3DSIMPLERENDERSTATEENCODE[0x5C]
     XBE_RS_DEFERRED_DIRTY = 0x342D90,                     // dirty bit per deferred state

@@ -1,10 +1,6 @@
-// Memory container: the game's heap and "physical" memory live in fixed reserved ranges, managed
-// by dlmalloc mspaces (dlmalloc_cfg.c). dlmalloc is deterministic - the same sequence of calls gives the same
-// addresses - so two PCs running the same lockstep session end up with identical game memory layouts.
-//
-// The ranges are reserved in DllMain, before the exe's entry point runs, so nothing else in the process can take
-// them. [mem] Container=1 (port_start -> container_init) commits them and routes the game's allocations here; with
-// it off the ranges stay reserved but unused.
+// Memory container: the game's heap and "physical" memory live in fixed reserved ranges managed by dlmalloc mspaces.
+// dlmalloc is deterministic, so every PC in a lockstep session gets identical game memory layouts. The ranges are
+// reserved in DllMain; [mem] Container=1 commits them and routes the game's allocations here.
 #include "port.h"
 #include "container.h"
 #include "memstats.h"
@@ -43,9 +39,8 @@ struct Arena {
     size_t peak;                                        // most in use at any report (container_report)
     bool warned;                                        // past 75% (logged once)
 };
-// The only copy of the layout (statesync.cpp reads it through container_arena). Below 2 GB everything stays inside
-// 0x20000000-0x30000000, the window the first layout proved free at DllMain time (gladiusport.dll sits at 0x30000000);
-// above 2 GB a large-address-aware process has the space to itself.
+// Arena layout (statesync.cpp reads it through container_arena). Below 2 GB everything stays in 0x20000000-0x30000000,
+// free at DllMain time; gladiusport.dll sits at 0x30000000.
 static Arena g_arenas[CTR_ARENAS] = {
     {"main", 0x20000000, 192 << 20},
     {"io", 0x2C000000, 16 << 20},
@@ -56,8 +51,7 @@ static Arena g_arenas[CTR_ARENAS] = {
 static bool g_on;
 static DWORD g_io_tls = TLS_OUT_OF_INDEXES;
 
-// [mem] AllocTags=1: every live container block -> size + allocating game stack (side table in the Windows heap,
-// so it never touches game memory). Used by the snapshot (pageprobe.cpp) to say who owns a differing byte.
+// Live block tags: size + allocating game stack, kept outside game memory.
 struct Tag {
     uint32_t size;
     bool local;                                         // machine-local: never overwritten by a state sync
@@ -67,22 +61,15 @@ static bool g_tags_on;
 static std::unordered_map<uintptr_t, Tag> *g_tags;
 static SRWLOCK g_tags_lock = SRWLOCK_INIT;
 
-// Blocks allocated by code that keeps machine-local state (audio playback, I/O threads) are excluded from state
-// syncs: engine sound 0x1F2000-0x1F5000, CRI middleware + cache writer 0x209000-0x260000.
-// NOT 0x1F9000-0x200000: that is the main thread's file API too (0x1FA71B <- file load 0x1AE52D = package
-// buffers, game data); the stream reader THREAD's own blocks already go to the io arena by thread.
+// Call sites whose allocations go to the local arenas. None any more: everything is synced; only explicit
+// game_alloc_local blocks are machine-local.
 static bool local_code(uint32_t ra)
 {
-    // "sync everything" (2026-10-07): CRI and engine sound state are synced like the rest of the game, so nothing is
-    // routed to the local arenas by call site any more (pointers between synced and local memory broke clients).
-    // Only explicitly machine-local objects (game_alloc_local) still go there.
     (void)ra;
     return false;
 }
 
-// Allocations made by machine-local code go to the local arenas: CRI allocates and frees on real-time events, and in
-// the shared main arena that slowly shifted every later game block (2026-10-07 soak: the audio stream object sat at
-// different addresses after ~15 min). The main / phys arenas only see the deterministic game allocations.
+// True when a game caller on the stack is machine-local code.
 static bool local_caller()
 {
     uint32_t st[CTR_TAG_STACK];
@@ -93,6 +80,7 @@ static bool local_caller()
     return false;
 }
 
+// Record a block's size and allocating stack.
 static void tag_add(const void *p, size_t size, bool force_local = false)
 {
     if (!g_tags_on)
@@ -130,9 +118,8 @@ static void tag_resize(const void *p, size_t size)
 
 static int arena_of(const void *p);
 
-// local blocks INSIDE the synced arenas (main / phys) - normally none now that local code has its own arenas;
-// what remains (e.g. a local block that grew in place) is masked by state syncs
-// (addr, size) pairs into `pairs` (room for `max`); returns the total (call with max 0 to size the buffer)
+// Machine-local blocks inside the synced arenas (masked by state syncs): (addr, size) pairs into `pairs` (room for
+// `max`), sorted; returns the total (max 0 = just count).
 int container_local_blocks_n(uint32_t *pairs, int max)
 {
     std::vector<std::pair<uint32_t, uint32_t>> out;
@@ -151,6 +138,7 @@ int container_local_blocks_n(uint32_t *pairs, int max)
     return (int)out.size();
 }
 
+// Visit every live tagged block.
 void container_tags(void (*cb)(uintptr_t addr, uint32_t size, const uint32_t *stack, void *ctx), void *ctx)
 {
     if (!g_tags_on)
@@ -161,14 +149,14 @@ void container_tags(void (*cb)(uintptr_t addr, uint32_t size, const uint32_t *st
     ReleaseSRWLockShared(&g_tags_lock);
 }
 
-// A game-visible "process heap" handle that is the same everywhere (the real GetProcessHeap() value is not): XAPI's
-// XapiProcessHeap and the CRT keep it in game memory. Points into the reserved main range, never dereferenced.
+// Game-visible "process heap" handle, identical on every PC (the CRT and XAPI keep it in game memory). Never
+// dereferenced.
 static void *const FAKE_HEAP = (void *)0x2000F000;
 
+// Reserve every arena (with write-watch, so state syncs re-hash only written pages).
 static void reserve_all()
 {
     for (Arena &a : g_arenas)
-        // write-watch: a state sync re-hashes only the pages written since the last one (GetWriteWatch, statesync.cpp)
         a.reserved = VirtualAlloc((void *)a.base, a.size, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_NOACCESS) == (void *)a.base;
 }
 
@@ -182,10 +170,10 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
 bool container_on() { return g_on; }
 void *container_fake_heap() { return FAKE_HEAP; }
 
-// Shim state that game logic depends on (xapi_input.cpp): the main range's first 64 KB lie outside the mspace,
-// so 0x20001000.. is free, zero at start and covered by state syncs like the rest of the main range.
+// Shim state that is game state (input, handle table): 0x20001000, below the main mspace, synced with game memory.
 void *container_shared_page() { return g_on ? (void *)0x20001000 : nullptr; }
 
+// [mem] Container=1: commit the arenas and create the mspaces.
 void container_init(const char *ini)
 {
     HMODULE self = GetModuleHandleA("gladiusport.dll");
@@ -203,8 +191,7 @@ void container_init(const char *ini)
             return;
         }
     }
-    // committed in full up front (dlmalloc expects usable memory): this is commit charge against RAM + pagefile, not
-    // RAM - a page only takes RAM once it is written
+    // commit charge only: a page takes RAM once it is written
     for (Arena &a : g_arenas) {
         if (!VirtualAlloc((void *)a.base, a.size, MEM_COMMIT, PAGE_READWRITE)) {
             port_log("container: could NOT commit %s range %08X (+%u MB, error %u) - container off (pagefile too "
@@ -230,6 +217,7 @@ void container_init(const char *ini)
              (unsigned)g_arenas[CTR_LOCAL].base, (unsigned)g_arenas[CTR_LOCAL_PHYS].base);
 }
 
+// Mark this thread as an I/O thread: its blocks go to the io arena.
 void container_set_io_thread()
 {
     if (g_io_tls != TLS_OUT_OF_INDEXES)
@@ -247,6 +235,7 @@ static int arena_of(const void *p)
 
 bool ctr_owns(const void *p) { return g_on && arena_of(p) >= 0; }
 
+// Log an arena overflow (once).
 static void full(Arena &a, size_t size)
 {
     if (InterlockedIncrement(&a.failed) == 1)
@@ -254,6 +243,7 @@ static void full(Arena &a, size_t size)
                  "desync\n", a.name, (unsigned)size);
 }
 
+// Tag a new block and raise the arena's high-water mark.
 static void note(Arena &a, const void *p, size_t size)
 {
     tag_add(p, size);
@@ -263,6 +253,7 @@ static void note(Arena &a, const void *p, size_t size)
             break;
 }
 
+// An arena's whole reserved range.
 bool container_arena(int arena, uintptr_t *base, size_t *size)
 {
     if (!g_on || arena < 0 || arena >= CTR_ARENAS)
@@ -272,6 +263,7 @@ bool container_arena(int arena, uintptr_t *base, size_t *size)
     return true;
 }
 
+// The used part of an arena: [base, high-water mark).
 bool container_range(int arena, uintptr_t *base, uintptr_t *end)
 {
     if (!g_on || arena < 0 || arena >= CTR_ARENAS)
@@ -281,6 +273,7 @@ bool container_range(int arena, uintptr_t *base, uintptr_t *end)
     return true;
 }
 
+// Game heap allocation: io arena on I/O threads, else main.
 void *ctr_alloc(size_t size, bool zero)
 {
     Arena &a = g_arenas[g_io_tls != TLS_OUT_OF_INDEXES && TlsGetValue(g_io_tls) ? CTR_IO
@@ -291,15 +284,14 @@ void *ctr_alloc(size_t size, bool zero)
         full(a, size);
         return nullptr;
     }
-    // always zeroed: dlmalloc hands back recently freed blocks with their old contents, and the game reads some
-    // fields it never initialised - each machine would see its own history (2026-10-07: save menu took a
-    // different branch at session frame 523 -> desync). Zeros are the same everywhere.
+    // Always zeroed: the game reads some fields it never initializes, and recycled blocks would differ per machine.
     (void)zero;
     memset(p, 0, size);
     note(a, p, size);
     return p;
 }
 
+// "Physical" allocation (page aligned).
 void *ctr_phys_alloc(size_t size, size_t align)
 {
     Arena &a = g_arenas[local_caller() ? CTR_LOCAL_PHYS : CTR_PHYS];
@@ -352,8 +344,7 @@ void container_report()
 {
     if (!g_on)
         return;
-    // every 60 s (watchdog) - assets stay loaded for a whole level, so the peak catches a level's footprint;
-    // the 75% warning flags heavy mods (high-poly / large-texture assets) before an arena overflows
+    // Called every 60 s: per-arena usage and peak, with a warning past 75%.
     for (Arena &a : g_arenas) {
         struct mallinfo mi = mspace_mallinfo(a.ms);
         if ((size_t)mi.uordblks > a.peak)
@@ -367,15 +358,14 @@ void container_report()
                      a.name, a.peak / 1048576.0, (unsigned)(a.size >> 20));
         }
     }
-    // the whole 32-bit process (game + renderer + driver + HD textures): the real ceiling is its address space
+    // whole 32-bit process (game + renderer + driver + textures)
     MEMORYSTATUSEX ms = {sizeof ms};
     if (GlobalMemoryStatusEx(&ms))
         port_log("container: process address space %.0f MB used of %.0f MB\n",
                  (ms.ullTotalVirtual - ms.ullAvailVirtual) / 1048576.0, ms.ullTotalVirtual / 1048576.0);
 }
 
-// Shim objects the game keeps pointers to (D3D resources, DSOUND buffers/streams, XGBuffers, save signature
-// contexts): created on the main thread in game order, so they live in the main arena too.
+// Shim objects the game keeps pointers to (D3D resources, sound buffers, ...): main arena, in game order.
 void *game_alloc(size_t size, bool zero)
 {
     if (g_on) {
@@ -390,6 +380,7 @@ void *game_alloc(size_t size, bool zero)
     return HeapAlloc(GetProcessHeap(), zero ? HEAP_ZERO_MEMORY : 0, size ? size : 1);
 }
 
+// Machine-local shim object: local arena, excluded from state syncs.
 void *game_alloc_local(size_t size)
 {
     if (g_on) {

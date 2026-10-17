@@ -1,16 +1,9 @@
-// HD texture replacement ([textures] Pack = folder of <name>.png - the named Xbox upscale set, "Resources\Upscaled":
-// 128tall_old_bark.tga.png etc.).
-// Names: the Xbox builds every named texture in tex_Bitmap::BuildFromPTTP (0x1EC250, thiscall bitmap, data, flag;
-// ret 8; loose .tga files) or tex_Bitmap::BuildFromBundleEntry (0x1EC600, .ptx bundles: arenas, characters, FX, UI).
-// The bitmap holds its asset name at +0x20, its image size at +0x18 / +0x1A and its D3D texture header at +0x74.
-// Their callers are redirected here to note Data -> (name, Format, content sample) once the pixels are in.
-// Loading: at that moment (level load, not first draw) a job goes to background workers - PNG decode (WIC), a check
-// that the image is the same picture as the Xbox texture (pack art from another build or language - fonts - would
-// otherwise show the wrong glyphs), Xbox power-of-two padding rebuilt, mip chain, D3D11 texture (the device is
-// free-threaded). The game thread never waits: d3d_texture_srv asks tex_replace_srv on upload and, while a job is
-// pending, once a frame afterwards; the original texture shows until the HD one is ready.
-// Texture memory is pooled and reused, so a Data address counts only while Format and content sample still match.
-// Swizzled textures only: linear ones address texels in pixels, so a bigger image would break their UVs.
+// HD texture replacement ([textures] Pack = folder of <name>.png). Named textures are built by
+// tex_Bitmap::BuildFromPTTP (0x1EC250, loose .tga) and BuildFromBundleEntry (0x1EC600, .ptx bundles); their callers
+// are redirected here to note Data -> (name, Format, content sample). At load time a background job decodes the PNG,
+// checks it is the same picture as the Xbox texture, rebuilds any padding, builds mips and creates the D3D11 texture.
+// The game thread never waits: the original shows until the HD one is ready. Swizzled textures only (linear ones
+// address texels in pixels).
 #include "d3d.h"
 #include <wincodec.h>
 #include <deque>
@@ -66,7 +59,7 @@ static void tex_dims(DWORD format, UINT *w, UINT *h)
     *h = 1u << ((format >> 24) & 0xF);
 }
 
-// the image area of the texture (padded textures: the top-left real_w x real_h)
+// the texture's image area (padded textures: the top-left real_w x real_h)
 static void image_area(const NameRec &r, UINT *iw, UINT *ih)
 {
     UINT xw, xh;
@@ -75,7 +68,7 @@ static void image_area(const NameRec &r, UINT *iw, UINT *ih)
     *ih = r.real_h && r.real_h <= xh ? r.real_h : xh;
 }
 
-// queue the HD load for this texture (caller holds g_cs); Data must hold the texture's pixels right now
+// Queue the HD load for this texture (caller holds g_cs); Data must hold the texture's pixels right now.
 static void request(const NameRec &r, DWORD data)
 {
     if (g_state.count(r.key))
@@ -132,9 +125,8 @@ static void __fastcall build_from_pttp(void *bitmap, void *edx, void *data, int 
     note_bitmap(bitmap);
 }
 
-// tex_Bitmap::BuildFromBundleEntry (0x1EC600, thiscall bitmap, entry, param, flags; ret 0xC; one caller 0x1797A8).
-// Entry: +1 'A'/'B'/'C' (DXT1/3/5), +0x10 data offset (0 = a sub-rectangle of the shared atlas - not a texture of
-// its own, skipped), +0x14 name.
+// tex_Bitmap::BuildFromBundleEntry (0x1EC600). Entry: +1 'A'/'B'/'C' (DXT1/3/5), +0x10 data offset (0 = a piece of
+// the shared atlas, skipped), +0x14 name.
 typedef void *(__fastcall *BuildEntryFn)(void *bitmap, void *edx, const BYTE *entry, int param, int flags);
 static void *__fastcall build_from_entry(void *bitmap, void *edx, const BYTE *entry, int param, int flags)
 {
@@ -145,6 +137,7 @@ static void *__fastcall build_from_entry(void *bitmap, void *edx, const BYTE *en
 }
 
 // ---------------------------------------------------------------- worker side
+// Decode a PNG to BGRA with WIC.
 static bool load_png(IWICImagingFactory *wic, const char *path, std::vector<BYTE> &px, UINT *w, UINT *h)
 {
     wchar_t wpath[MAX_PATH * 2];
@@ -168,9 +161,7 @@ static bool load_png(IWICImagingFactory *wic, const char *path, std::vector<BYTE
     return ok;
 }
 
-// how far the HD image (covering the texture's image area, w x h) is from the Xbox texels: mean over the THUMB grid
-// of max(alpha difference, colour difference weighted by coverage), 0..255. Each sample averages the HD pixels
-// that make up that one Xbox texel.
+// How far the HD image is from the Xbox texels: mean over a thumbnail grid of the alpha / colour difference, 0..255.
 static int image_diff(const Job &j, const std::vector<BYTE> &px, UINT w, UINT h, UINT cover_w, UINT cover_h)
 {
     UINT iw, ih;                                                // the thumb samples are over the image area
@@ -202,8 +193,8 @@ static int image_diff(const Job &j, const std::vector<BYTE> &px, UINT w, UINT h,
     return (int)(total / (THUMB * THUMB));
 }
 
-// Padded texture (a 306x276 arena portrait in a 512x512 texture): the pack holds the image alone, scaled. When it is
-// the image's shape at one whole scale, rebuild the Xbox layout at that scale - image top left, transparent rest.
+// Padded texture (e.g. a 306x276 portrait in 512x512): when the pack image has the image's shape at a whole scale,
+// rebuild the Xbox layout at that scale.
 static bool pad_to_texture(std::vector<BYTE> &px, UINT *w, UINT *h, const NameRec &r, UINT xw, UINT xh)
 {
     if (!r.real_w || !r.real_h || (r.real_w == xw && r.real_h == xh) || r.real_w > xw || r.real_h > xh)
@@ -220,7 +211,7 @@ static bool pad_to_texture(std::vector<BYTE> &px, UINT *w, UINT *h, const NameRe
     return true;
 }
 
-// immutable BGRA8 texture with a box-filtered mip chain built here (no immediate context needed)
+// Immutable BGRA8 texture with a box-filtered mip chain.
 static ID3D11ShaderResourceView *make_srv(std::vector<BYTE> &px, UINT w, UINT h)
 {
     std::vector<std::vector<BYTE>> levels;
@@ -330,8 +321,8 @@ static DWORD WINAPI worker(void *)
 }
 
 // ---------------------------------------------------------------- render side
-// asset name key ("shadow", "sky_noon_clear_l", ...) of the named texture at this Data address, "" if unknown or
-// the memory now holds something else
+// Asset name key ("shadow", "sky_noon_clear_l", ...) of the named texture at this Data address; "" if unknown or the
+// memory now holds something else.
 std::string tex_key(DWORD data, DWORD format)
 {
     std::string k;
@@ -402,8 +393,8 @@ void port_tex_replace_init(const char *ini)
         port_log("textures: pack folder %s not found - replacement off\n", g_pack);
         return;
     }
-    // [textures] Exclude = comma-separated name patterns (* ?) kept original. Default: eyes - the cinematic models
-    // reuse eye texture names with another layout, and the pack's images turned their eyes black (2026-10-10)
+    // [textures] Exclude = comma-separated name patterns (* ?) kept original. Default: eyes (the cinematic models reuse
+    // eye texture names with another layout).
     char excl[512];
     GetPrivateProfileStringA("textures", "Exclude", "eye*,*_eye*,*eyes*", excl, sizeof excl, ini);
     std::vector<std::string> pats;

@@ -1,18 +1,8 @@
-// Virtual handles (netplay "sync everything"): the game never sees a Windows handle. Events,
-// semaphores, mutexes, threads and files it creates get VH_BASE + slot * 4; the real handle is looked up here.
-// Handle values are kept in game memory (engine objects, CRI, CRT), so with real handles a state sync would hand a
-// client the host's handle numbers. With virtual ones the numbers are the same everywhere, and the slot table
-// itself lives in the memory container's shared page, i.e. it is synced with the rest of game memory:
-//   shared (synced)    kind, open parameters, path + position for files
-//   local (this PC)    the real Windows handle per slot
-// Before a sync every machine publishes its objects' states into the table (event signaled, semaphore count, file
-// position). After a sync the client REBUILDS every event / semaphore / mutex from the host's table: slot numbers
-// drift between machines before a session (files and audio events come and go in different orders), so the
-// client's own object in a slot is usually some other object. Threads blocked in a wait would then sleep on the
-// old object forever (2026-10-07: stream reader never woke -> endless load loop) - so every wait on a virtual
-// handle also waits on a "rebind" event that fires after a rebuild: the thread wakes as if signaled, goes round
-// its loop and re-reads the (host's) handle from game memory. Files are reopened if the path differs; threads
-// keep their objects (they are created at boot, in the same order everywhere).
+// Virtual handles: the game gets VH_BASE + slot * 4 instead of Windows handles, so handle values in game memory are
+// identical on every netplay machine. The slot table lives in the memory container's shared page and is synced with
+// game memory; the real handle per slot stays local. After a sync, events / semaphores / mutexes are rebuilt from
+// the host's table and files reopened; every wait on a virtual handle also wakes on a "rebind" event so blocked
+// threads re-read their handle.
 #include "port.h"
 #include "handles.h"
 #include "container.h"
@@ -35,16 +25,14 @@ static uint32_t g_real_kind[VH_SLOTS];
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static HANDLE g_rebind;                                 // manual-reset: set while waiters are being kicked
 static volatile LONG g_waiters;                         // threads inside a rebind-aware wait
-// Sync epoch: +1 per table rebuild. A thread that read a handle from game memory BEFORE a rebuild and only
-// reaches the wait AFTER it (parked in the I/O gate or between giving up the CRI lock and waiting during the
-// sync - the kick cannot reach it) would wait on the old number = some other object now. Such waits return
-// at once as if signaled; the caller's loop re-reads its handle. t_epoch is taken where the thread leaves game
-// code: Blocking (xapi_thread.cpp) and the I/O thread wait hooks (gn_hooks.cpp).
+// Sync epoch, +1 per table rebuild. A wait that read its handle before a rebuild returns at once as if signaled,
+// so the caller re-reads it. t_epoch is set where a thread leaves game code (xapi_thread.cpp, gn_hooks.cpp).
 static volatile LONG g_epoch;
 static __declspec(thread) LONG t_epoch = -1;
 
 LONG vh_epoch() { return g_epoch; }
 void vh_mark_epoch() { t_epoch = g_epoch; }
+// True (once) when this thread's handle predates the last rebuild.
 static bool stale_wait()
 {
     LONG e = t_epoch;
@@ -62,8 +50,7 @@ static HANDLE rebind_event()
     return g_rebind;
 }
 
-// Waits on virtual handles also wake when the handle table is rebuilt (returns as if signaled: the caller's loop
-// re-reads its handle from game memory). Real handles wait normally.
+// Wait on a virtual handle; also returns (as signaled) when the table is rebuilt.
 DWORD vh_wait(HANDLE h, DWORD ms, BOOL alertable)
 {
     if (stale_wait() && vh_is(h))
@@ -101,8 +88,7 @@ static VhShared *table()
 {
     static VhShared *t;
     if (!t) {
-        // shared page 0x20001000: InputShared (xapi_input.cpp) at its start, this table at 0x20002000 up to
-        // 0x2000F000 (the fake heap handle) = 0xD000 bytes = 416 slots
+        // shared page: input state at 0x20001000, this table from 0x20002000 to 0x2000F000 (416 slots)
         char *page = (char *)container_shared_page();
         t = page ? (VhShared *)(page + 0x1000) : g_local_table;
     }
@@ -118,6 +104,7 @@ bool vh_is(HANDLE h)
 
 static int slot_of(HANDLE h) { return vh_is(h) ? (int)(((uintptr_t)h - VH_BASE) >> 2) : -1; }
 
+// Wrap a real handle in a free slot (returns the real handle if the table is full).
 HANDLE vh_new(uint32_t kind, HANDLE real, uint32_t a, uint32_t b, uint32_t c, const char *path)
 {
     if (!real || real == INVALID_HANDLE_VALUE)
@@ -173,7 +160,7 @@ BOOL vh_close(HANDLE h)
     return r ? CloseHandle(r) : FALSE;
 }
 
-// before a state sync (host and clients alike, with the other game threads parked): object states into the table
+// Before a state sync: publish object states (event signaled, semaphore count, file position) into the table.
 void vh_publish()
 {
     VhShared *t = table();
@@ -205,7 +192,7 @@ void vh_publish()
     ReleaseSRWLockShared(&g_lock);
 }
 
-// after a state sync replaced the shared table: make every slot usable on this machine
+// After a state sync replaced the table: recreate or reopen every slot on this machine, then wake all waiters.
 void vh_reconcile()
 {
     VhShared *t = table();
@@ -222,7 +209,7 @@ void vh_reconcile()
             continue;
         }
         char local_path[MAX_PATH] = "";
-        // the file this machine really has open for that Xbox path (z:\\gladius.bec is served from the disc file)
+        // the file this machine has open for that Xbox path (z:\gladius.bec is served from the disc file)
         if (e.kind == VH_FILE &&
             !port_map_path(_stricmp(e.path, "z:\\gladius.bec") ? e.path : "d:\\gladius.bec", local_path))
             local_path[0] = 0;

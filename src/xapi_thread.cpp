@@ -1,5 +1,4 @@
-// XAPI threads / synchronization / last error / time -> Windows. The Xbox functions are a Win32 subset
-// with identical signatures; object handles are Windows handles throughout (whole family replaced).
+// XAPI threads, synchronization, last error and time -> Windows (same signatures). Objects get virtual handles.
 #include "port.h"
 #include "memstats.h"
 #include "container.h"
@@ -10,11 +9,9 @@ void dtrace(const char *fmt, ...);                      // gn_core.cpp: netplay 
 
 typedef ULONG (WINAPI *RtlNtStatusToDosErrorFn)(LONG);
 
-// ---- deferred thread start ----------------------------------------------------------------------------
-// On the single-core Xbox a new thread does not run until its creator blocks or yields; engine code relies
-// on that (e.g. thread procs 0x1FDA30 / 0x2105B0 return -1 unless the owner set its ready flag right after
-// CreateThread). Game threads are therefore created suspended and released when the creating thread next
-// waits, sleeps, yields or presents - or after 50 ms. After that they run fully parallel on all cores.
+// Deferred thread start: on the single-core Xbox a new thread doesn't run until its creator blocks or yields, and
+// engine code relies on that. Game threads start suspended and are released at the creator's next wait / sleep /
+// yield / present, or after 50 ms.
 struct PendingThread {
     HANDLE handle;
     DWORD creator;
@@ -24,6 +21,7 @@ static PendingThread g_pending[32];
 static int g_pending_count;
 static SRWLOCK g_pending_lock = SRWLOCK_INIT;
 
+// Release deferred threads: this thread's (all = false) or any older than 50 ms (all = true).
 static void resume_pending(bool all)
 {
     if (!g_pending_count)
@@ -45,10 +43,8 @@ static void resume_pending(bool all)
 
 void port_thread_yield_point() { resume_pending(false); }
 
-// Every blocking call is a point where the single-core Xbox would run other threads: release deferred
-// thread starts and give up the CRI priority-lock for the duration (see cri_lock.cpp).
-// Game-visible thread priorities (by thread id). A priority set on another thread takes effect for the
-// exclusion (port_set_elevated) when that thread next runs: thread start or return from a blocking call.
+// Game-visible thread priorities by thread id. Threads above normal hold the CRI exclusion (cri_lock.cpp) while they
+// run; a priority set on another thread applies when that thread next runs.
 struct ThreadPrio {
     DWORD tid;
     int prio;
@@ -84,9 +80,10 @@ static int prio_load(DWORD tid)
 
 static void sync_elevation() { port_set_elevated(prio_load(GetCurrentThreadId()) > 0); }
 
-// deterministic mode (gn_core.cpp): told when a game thread enters / leaves Sleep or SleepEx
+// deterministic mode (gn_core.cpp): told when a game thread enters / leaves Sleep
 void (*port_sleep_notify)(int enter);
 
+// Around every blocking call: release deferred starts and the CRI lock, restore them afterwards.
 struct Blocking {
     int depth;
     Blocking() { vh_mark_epoch(); resume_pending(false); depth = port_lock_suspend(); }
@@ -96,8 +93,7 @@ void port_thread_timer_tick() { resume_pending(true); }
 
 extern "C" {
 
-// Every object the game creates gets a virtual handle (handles.cpp): the numbers live in game memory and must be
-// the same on every machine of a netplay session; each call below resolves them to the real handle.
+// Every object gets a virtual handle (handles.cpp); each call resolves it to the real one.
 HANDLE __stdcall xapi_CreateEventA(SECURITY_ATTRIBUTES *sa, BOOL manual, BOOL initial, const char *name)
 {
     return vh_new(VH_EVENT, CreateEventA(sa, manual, initial, name), manual, initial);
@@ -209,8 +205,7 @@ BOOL __stdcall xapi_SetThreadPriority(HANDLE h, int p)
 }
 int __stdcall xapi_GetThreadPriority(HANDLE h) { return GetThreadPriority(vh_real(h)); }
 BOOL __stdcall xapi_SetThreadPriorityBoost(HANDLE h, BOOL disable) { return SetThreadPriorityBoost(vh_real(h), disable); }
-// Suspend/Resume are hand-off points between CRI threads (its server loop resumes the server thread and spins;
-// the server suspends itself when done): on Xbox the other thread then gets the CPU, so the CRI lock is given up.
+// Suspend / Resume are CRI hand-off points: give up the CRI lock like any blocking call.
 DWORD __stdcall xapi_SuspendThread(HANDLE h)
 {
     Blocking b;
@@ -242,11 +237,8 @@ void __stdcall xapi_ExitThread(DWORD code)
     ExitThread(code);
 }
 BOOL __stdcall xapi_GetExitCodeThread(HANDLE h, DWORD *code) { return GetExitCodeThread(vh_real(h), code); }
-// Virtual thread ids. The engine keeps thread ids in game memory and compares them (the stream reader only reads
-// if GetCurrentThreadId() == [0x4FCA14], its own id stored at startup): Windows ids are random per process, so after
-// a netplay state sync copied the host's memory the client's reader saw a "foreign" id and skipped every request.
-// Game threads get ids by creation order (main 0x1000, then 0x1004, 0x1008, ... - boot creates them in the same
-// order everywhere); port threads that run game code (VBlank callback) get fixed ones.
+// Virtual thread ids: the engine stores and compares thread ids in game memory, so they must match on every
+// netplay machine. Game threads get 0x1000, 0x1004, ... in creation order; port threads running game code get fixed ids.
 static __declspec(thread) DWORD t_vtid;
 static volatile LONG g_next_vtid = 0x1000;              // + 4 per game thread; 0x1000 = main (port_main.cpp)
 
@@ -258,6 +250,7 @@ struct ThreadStart {
     void *param;
     DWORD vtid;
 };
+// Game thread entry: set up TLS, memory role, priority and virtual id, then run the game's thread proc.
 static DWORD WINAPI thread_start(void *p)
 {
     ThreadStart ts = *(ThreadStart *)p;
@@ -276,7 +269,7 @@ static DWORD WINAPI thread_start(void *p)
 HANDLE __stdcall xapi_CreateThread(SECURITY_ATTRIBUTES *sa, SIZE_T stack, LPTHREAD_START_ROUTINE fn, void *param,
                                    DWORD flags, DWORD *id)
 {
-    // Xbox: 0 = XBE default stack (header page, no longer mapped here). Windows threads get >= 256 KB.
+    // 0 = the XBE default stack; Windows threads get at least 256 KB
     if (stack < 0x40000)
         stack = 0x40000;
     ThreadStart *ts = new ThreadStart{fn, param, (DWORD)InterlockedAdd(&g_next_vtid, 4)};
@@ -310,10 +303,8 @@ DWORD __stdcall xapi_GetCurrentThreadId() { return port_vtid(); }
 
 DWORD __stdcall xapi_GetTickCount() { return GetTickCount(); }
 
-// The engine reads the CPU timestamp counter directly (43 inline `cpuid; rdtsc` timers) and converts with
-// QueryPerformanceFrequency, which on Xbox is a hard-coded 733 MHz. Here QPC *is* the timestamp counter and
-// QPF is this machine's measured TSC rate, so inline rdtsc and QPC stay on one clock on any CPU (modern
-// x86 TSCs are invariant: constant rate, synchronized across cores).
+// The engine reads rdtsc directly and converts with QueryPerformanceFrequency (733 MHz on Xbox). Here QPC is rdtsc and
+// QPF is this machine's measured TSC rate, so both stay on one clock.
 static LONGLONG measure_tsc_hz()
 {
     LARGE_INTEGER f, q0, q1;

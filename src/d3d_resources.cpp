@@ -1,5 +1,5 @@
-// Xbox D3D8 resources on the shim side: headers keep the Xbox layout the game reads/writes; Data holds a real
-// pointer into "physical" memory (>= 0x80000000). D3D11 objects get attached in R1 (textures) / R2 (buffers).
+// Xbox D3D8 resources: headers keep the Xbox layout the game reads and writes; Data holds a real pointer into
+// "physical" memory (>= 0x80000000). D3D11 objects are attached by the renderer.
 #include "d3d.h"
 #include "container.h"
 #include <set>

@@ -1,24 +1,12 @@
-// Live mesh editing (gladius_editor.exe): reshape a loaded static prop model in the running game, Save writes the
-// change into a loose copy of its .pax.
-//
-// Where the vertices live: the model build (0x1E44E0) resolves the XRND geometry (0x219C40: header offsets ->
-// pointers, 0x219910 / 0x2193A0 / 0x219680 block fixups). Each vertex-buffer entry (0x14 bytes: +0 -> D3D VB
-// header, +4 vertex count, +0x10 stride) whose header has Common = -1 gets a D3D buffer (0x2154A0) that the file's
-// vertices are copied into (Lock2 + copy); then the file buffer is cut off at the vertex data block (0x176C80),
-// so the vertices the game draws exist only in that buffer (header +4 Data). The port's renderer hashes every
-// vertex / index range it draws each frame and uploads what changed (d3d_program.cpp cached_stream /
-// index_list), so bytes written into those buffers show on the next frame - no reload.
-//
-// Chain from a prop: prop +0x7C model instance -> +0x18 model -> +0x1C pax object (+0x28 SKEL, +0x4C doeg) and
-// model +0x28 geometry record (+0x1C count A / +0x20 sub-mesh pointer list, +0x28 / +0x2C list B, +0x50 sphere
-// radius, +0x54 centre). Sub-mesh (0x38): +0x04 VB entry, +0x08 index entry (+4 -> u16 indices, +0x0C count,
-// +0x10 primitive 5 list / 6 strip / 7 fan), +0x0C sphere radius, +0x10 centre, +0x34 name. Model +0x40 centre /
-// +0x4C radius (culling), +0x5C / +0x68 box (picking).
-//
-// Save: the pax is read again through the engine's loader (loose copy or .bec) and the edited vertex and index
-// bytes are written over the file's own (every in-block pointer is block-relative, so a vertex buffer entry's
-// data lands at base + block 0x6C + its D3D header's Data offset); sub-mesh and geometry spheres are updated too.
-// The edits are only in game memory until then (undo / redo journal per stroke).
+// Live mesh editing (editor): reshape a loaded static prop model in the running game; Save writes a loose copy of its
+// .pax. The model build (0x1E44E0) copies each vertex buffer into a D3D buffer and drops the file's copy, so edits go
+// straight into those buffers; the renderer re-uploads changed ranges on the next frame.
+// Chain: prop +0x7C model instance -> +0x18 model -> +0x1C pax object (+0x28 SKEL, +0x4C doeg); model +0x28 geometry
+// (+0x1C / +0x20 sub-mesh list A, +0x28 / +0x2C list B, +0x50 / +0x54 sphere). Sub-mesh (0x38): +0x04 VB entry,
+// +0x08 index entry (+4 indices, +0x0C count, +0x10 primitive 5 list / 6 strip / 7 fan), +0x0C / +0x10 sphere, +0x34
+// name. Model +0x40 / +0x4C culling sphere, +0x5C / +0x68 box.
+// Save re-reads the pax and writes the edited bytes over the file's own (in-block pointers are block-relative). Until
+// then edits live in game memory, with an undo / redo journal per stroke.
 #include "port.h"
 #include <vector>
 #include <string>
@@ -99,8 +87,8 @@ static void mstatus(const char *fmt, ...)               // any thread
 
 // ------------------------------------------------------------------------------------------------ session
 struct Vb { uint8_t *data; int stride, count, base, entry; std::vector<uint8_t> orig; };
-// a texture the model draws with: texture object (command 0x01 -> +0x10 name, +0x14 D3D texture header in the
-// model's bitmap, +0x28 / +0x2C size); DXT1 (0x0C) / DXT5 (0x0F) are editable, mip levels follow each other
+// a texture the model draws with (command 0x01 -> +0x10 name, +0x14 D3D header, +0x28 / +0x2C size); DXT1 (0x0C) /
+// DXT5 (0x0F) are editable, mip levels follow each other
 struct Tex {
     std::string name;
     uint8_t *hdr;                                       // XPixelContainer: +4 Data, +0xC Format
@@ -218,7 +206,7 @@ static void dir_to_world(const float *M, const float l[3], float w[3])
 {
     for (int k = 0; k < 3; k++) w[k] = l[0] * M[k] + l[1] * M[4 + k] + l[2] * M[8 + k];
 }
-// world direction -> model direction (inverse of the matrix's 3x3; rows of M are the model axes in the world)
+// World direction -> model direction (inverse of the matrix's 3x3).
 static bool dir_to_local(const float *M, const float w[3], float l[3])
 {
     float a[3][3];                                      // world = a * local
@@ -316,7 +304,7 @@ static void commit_op()
     notify_info();
 }
 
-// triangles of an index list (strip: odd ones flipped back so all share one winding; degenerate ones dropped)
+// Triangles of an index list (strips: odd ones flipped to one winding; degenerate ones dropped).
 static void list_tris(const std::vector<WORD> &ix, int prim, std::vector<std::array<WORD, 3>> &out)
 {
     out.clear();
@@ -330,7 +318,7 @@ static void list_tris(const std::vector<WORD> &ix, int prim, std::vector<std::ar
         for (int k = 0; k + 2 < n; k += 3) add(ix[k], ix[k + 1], ix[k + 2]);
 }
 
-// triangles -> one strip with degenerate joins, winding kept (tools/xrnd.py tris_to_strip)
+// Triangles -> one strip with degenerate joins, winding kept (as tools/xrnd.py tris_to_strip).
 static std::vector<WORD> strip_of(const std::vector<std::array<WORD, 3>> &tris)
 {
     std::vector<WORD> s;
@@ -354,10 +342,8 @@ static int triangle_count(const std::vector<WORD> &ix, int prim)
     return (int)t.size();
 }
 
-// a sub-mesh's indices. Same length: written in place. Back to the original length: into the file's own memory.
-// Otherwise a buffer of the editor's (kept for the life of the process - the model may keep drawing from it) and
-// the index entry points there: +4 indices, +0x0C count, +8 triangle count. The renderer keys index lists by
-// address + count, so the new list shows on the next frame.
+// Set a sub-mesh's indices: same length in place, original length back into the file's memory, otherwise into an
+// editor buffer (kept for the process's life) the index entry points at.
 static void set_indices(int s, const std::vector<WORD> &v)
 {
     Sub &b = S.subs[s];
@@ -378,7 +364,7 @@ static bool same_indices(const Sub &b, const std::vector<WORD> &v)
     return (int)v.size() == b.nidx && !memcmp(b.idx, v.data(), v.size() * 2);
 }
 
-// apply a journal entry, returning its inverse (the values it replaced)
+// Apply a journal entry, returning its inverse.
 static Op apply_op(const Op &op)
 {
     Op inv;
@@ -460,8 +446,8 @@ static void set_group(int g, const float p[3])
 }
 static const float *gpos(int g) { return posp(S.gmem[S.gstart[g]]); }
 
-// normals of the moved groups and their neighbours: area-weighted face normals over the weld group's members
-// whose ORIGINAL normal agrees with this vertex's (keeps hard edges hard - a crate's corner stays sharp)
+// Recompute normals of the moved groups and their neighbours from faces whose original normal agrees (hard edges
+// stay hard).
 static void renormal_moved()
 {
     if (S.moved.empty()) return;
@@ -544,6 +530,7 @@ static void update_bounds()                             // culling spheres + pic
 }
 
 // ------------------------------------------------------------------------------------------------ start
+// Weld groups, triangles, adjacency and wireframe edges of the session's model.
 static void build_topology()
 {
     // weld groups: vertices at the same position (to 1e-4) move together
@@ -641,8 +628,8 @@ static void build_topology()
     S.flip = disagree > agree;
 }
 
-// a material's textures: programs (+0x04 count, +0x08 pointers) -> +0x14 command stream; op 0x01 sub-op 0 binds
-// the texture object at +8 (resolved by 0x219700)
+// Add a material's textures: programs (+0x04 count, +0x08 pointers) -> +0x14 command stream; op 0x01 binds the
+// texture object at +8.
 static int add_texture(uint8_t *to)
 {
     uint8_t *hdr = *(uint8_t **)(to + 0x14);
@@ -699,10 +686,8 @@ static void start(const Cmd &c)
 }
 
 // ------------------------------------------------------------------------------------------------ level geometry
-// The scene's level (.scn "LEVEL:" -> <name>.pao, scene object type "!LVL") is an ordinary model object: model +0x1C
-// pax object (+0xC file name, +0x40 OBBT), +0x28 geometry. Where the scene keeps it is found at run time: pointers
-// out of the scene object (world map [0x417D64], battle [0x39D320]) are followed a few levels deep until one is a
-// model whose pax file name ends in .pao. The path is logged.
+// Level geometry: the scene's level (.pao) is an ordinary model object, found at run time by following pointers out
+// of the scene object (world map [0x417D64], battle [0x39D320]) to a model whose pax name ends in .pao.
 static bool readable(const void *p, size_t n)
 {
     MEMORY_BASIC_INFORMATION mi;
@@ -800,7 +785,7 @@ static std::string level_rel_path(const char *f)
     for (auto &ch : rel) if (ch == '/') ch = (char)0x5C;
     std::string low = rel;
     std::transform(low.begin(), low.end(), low.begin(), ::tolower);
-    // path aliases the engine keeps in names: "$d\" = the data folder, "$l\" = data\levels ("$l\worldmap\\x.pao")
+    // engine path aliases: "$d\" = data, "$l\" = data\levels
     size_t k = low.find("data\\");
     if (k != std::string::npos) rel = rel.substr(k + 5);
     else if (low.size() > 3 && low[0] == '$' && low[1] == 'l') rel = "levels\\" + rel.substr(3);
@@ -812,9 +797,8 @@ static std::string level_rel_path(const char *f)
     return clean;
 }
 
-// Culling (OBBT, pax +0x40 -> {node block, map}): map = int16 entries (-n = node n, >= 0 = sub-mesh in list A
-// then B order), node 0x40 = 3 rows (axis xyz, half extent) + centre + u16 first, u16 count. After an edit every node's
-// box is fitted again along its own axes around what it holds, so moved geometry is not culled where it no longer is.
+// Culling (OBBT, pax +0x40): after an edit every node's box is refitted around what it holds, so moved geometry
+// isn't culled where it no longer is.
 static void refit_obbt()
 {
     if (!S.level) return;
@@ -958,9 +942,9 @@ static void open_model(const Cmd &c, uint8_t *prop, uint8_t *mobj)
 // ------------------------------------------------------------------------------------------------ save
 static uint32_t rd32(const std::string &f, size_t o) { uint32_t v; memcpy(&v, f.data() + o, 4); return v; }
 
-// The finished file goes to the editor thread (WM_MESH_SAVED): a private copy for this prop (default - the prop's
-// MODELS line in its .prp is pointed at it, then the level reloads) or over the shared model itself.
-// texture paint on a shared patch: the painted faces get their own copy of the texture (tools/paxsplit.py)
+// The finished file goes to the editor thread (WM_MESH_SAVED): a private copy for this prop (default; its .prp MODELS
+// line is repointed and the level reloads) or over the shared model.
+// Texture paint on a shared patch: the painted faces get their own texture copy (as tools/paxsplit.py).
 struct PaintSplit { int sub; std::vector<std::array<WORD, 3>> tris; std::string tex, new_tex; std::vector<uint8_t> data;
                     int fmt, w, h, mips; };
 struct SaveJob {
@@ -980,17 +964,14 @@ struct SaveJob {
 static const UINT WM_MESH_SAVED = WM_APP + 23;
 bool port_read_game_file(const std::string &key, std::string &out);   // bec_read.cpp
 
-// path relative to data. Read directly (loose copy, else gladius.bec) - NOT through the engine's loader
-// 0x1AE670: that pumps the asynchronous file system from our frame hook, and the reload after Save then came up
-// with no retail prop models (see bec_read.cpp)
+// A file relative to data, read directly (loose copy, else gladius.bec), not through the engine's loader (bec_read.cpp).
 static bool load_data(const std::string &rel, std::string &out)
 {
     return port_read_game_file("data/" + rel, out);
 }
 
-// The index data block (+0x68) rebuilt from every index entry in order: the session's current lists, the file's
-// own for entries outside it. Entry +4 offset, +8 triangles, +0x0C count; later blocks shift by the size change
-// (header offsets, data size +0x0C, XRND chunk size) - every in-block pointer is block-relative, nothing else moves.
+// Rebuild the index data block (+0x68) from every index entry (session lists, else the file's own); later blocks
+// shift by the size change.
 static bool rebuild_indices(std::string &f, size_t d, size_t xr, const std::string &key)
 {
     size_t base = d + rd32(f, d + 4);
@@ -1044,12 +1025,9 @@ static bool rebuild_indices(std::string &f, size_t d, size_t xr, const std::stri
     return true;
 }
 
-// Vertex colours for a model without them: every stride-24 vertex buffer (position, normal, UV) becomes stride 28
-// (position, normal, colour, UV) with white (multiplies 1:1 - the look does not change), the vertex data block
-// (+0x6C) is rebuilt with the D3D headers' Data offsets (+4, relative to that block) and the entries' strides
-// (+0x10) updated, and every vertex-format command (op 0x09, format word at +4) gets the colour bit 0x10.
-// Later blocks shift like rebuild_indices. Save-time only: in memory the engine has replaced the format word with a
-// vertex shader handle (0x20EF40), so the model reloads afterwards.
+// Vertex colours for a model without them: stride-24 vertex buffers become stride 28 with white colours, the vertex
+// block (+0x6C) is rebuilt and every vertex-format command (op 0x09) gets the colour bit 0x10. Save-time only; the
+// model reloads afterwards.
 static bool add_vertex_colors(std::string &f, size_t d, size_t xr, const std::string &key)
 {
     size_t base = d + rd32(f, d + 4);
@@ -1084,7 +1062,7 @@ static bool add_vertex_colors(std::string &f, size_t d, size_t xr, const std::st
     }
     size_t oldlen = vb_end - vb;
     while ((blk.size() - oldlen) & 3) blk.push_back(0);
-    // vertex formats: the command block (+0x64) holds every program's stream, ops (byte op, byte length), 0 = end
+    // vertex formats: the command block (+0x64) holds each program's stream of ops (byte op, byte length), 0 = end
     uint32_t o64 = rd32(f, d + 0x64), n64 = 0xFFFFFFFF;
     for (int k = 0x2C; k < 0x7C; k += 4) {
         uint32_t o = rd32(f, d + k);
@@ -1115,9 +1093,8 @@ static bool add_vertex_colors(std::string &f, size_t d, size_t xr, const std::st
 static std::string lower(std::string s);
 static std::string private_model(const std::string &model, const std::string &prop);
 
-// edited textures into the model's .ptx (PTTP / NAME / NMPT / PFHD / PADD / PTDT, see tools/ptx.py): PFHD entry
-// (32 bytes) u16 format (0x4100 DXT1, 0x4300 DXT5), u16 mips, u32 0, u16 w, u16 h, u32 size, u32 data offset
-// relative to the entry, u32 name offset in NMPT. Same size and format only, so the levels overwrite in place.
+// Edited textures into the model's .ptx (layout: tools/ptx.py). PFHD entry (32 bytes): u16 format (0x4100 DXT1,
+// 0x4300 DXT5), u16 mips, u32 0, u16 w, u16 h, u32 size, u32 data offset, u32 name offset. Same size and format only.
 static std::string tex_key(std::string n)                // "Foo.TGA" -> "foo"
 {
     std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -1153,7 +1130,7 @@ static bool patch_ptx(std::string &ptx)
             uint16_t fmt, mips, w, h;
             memcpy(&fmt, &ptx[e], 2), memcpy(&mips, &ptx[e + 2], 2), memcpy(&w, &ptx[e + 8], 2), memcpy(&h, &ptx[e + 10], 2);
             size_t dst = e + rd32(ptx, e + 16);
-            // format codes: 0x4100 / Xbox 0x2000 = DXT1, 0x4300 / Xbox 0x2200 = DXT5 (Protius Converter-Arena-Map.py)
+            // format codes: 0x4100 / Xbox 0x2000 = DXT1, 0x4300 / Xbox 0x2200 = DXT5
             bool fmt_ok = t.fmt == 0x0C ? fmt == 0x4100 || fmt == 0x2000 : fmt == 0x4300 || fmt == 0x2200;
             bool same = w == t.w && h == t.h && mips == t.levels && fmt_ok;
             if (!same || dst + t.bytes > ptx.size()) {
@@ -1175,9 +1152,8 @@ struct MergeReq { std::string glb; float fit; bool ground; bool has_at; float at
 static const float *uvp(int gi);
 static std::array<WORD, 3> canon_tri(WORD a, WORD b, WORD c);
 
-// Does any face the brush did NOT touch read a changed texel? Changed = the painted top level differs from the
-// loaded one; each untouched face's UV triangle is rasterised over that mask (UVs wrap). If so, the touched faces
-// of every sub-mesh drawing that texture go to their own copy (the shared texture is saved unpainted).
+// Does any face the brush did NOT touch read a changed texel? If so, the touched faces of every sub-mesh using that
+// texture get their own copy (the shared texture is saved unpainted).
 static void paint_splits(std::vector<PaintSplit> &out)
 {
     for (int ti = 0; ti < (int)S.texs.size(); ti++) {
@@ -1229,8 +1205,8 @@ static void paint_splits(std::vector<PaintSplit> &out)
         if (!conflict) continue;
         // a free name: <texture>_u<n>, at most 31 characters
         std::string nn;
-        // the suffix goes before the first dot ("PROPSHIP.CC" -> "PROPSHIP_u1.CC"): the engine's name compare
-        // (0x1DB420) treats what follows a dot specially - "PROPSHIP.CC_u1" never found its .ptx entry
+        // the suffix goes before the first dot ("PROPSHIP.CC" -> "PROPSHIP_u1.CC"): the engine's name compare (0x1DB420)
+        // treats what follows a dot specially
         size_t dot = t.name.find('.');
         std::string stem = dot == std::string::npos ? t.name : t.name.substr(0, dot);
         std::string ext = dot == std::string::npos ? "" : t.name.substr(dot);
@@ -1258,8 +1234,8 @@ static void paint_splits(std::vector<PaintSplit> &out)
 }
 static int ray_pick(const CamFrame &cf, const float *M, float o[3], float d[3], float &best, float &bu, float &bv);
 
-// faces the predicate picks leave their sub-mesh (re-stripped; a sub-mesh left empty is hidden) - inside an open op.
-// -> faces deleted. (Delete faces, and Merge GLB's "clear what it overlaps".)
+// Faces the predicate picks leave their sub-mesh (re-stripped; an empty sub-mesh is hidden), inside an open op.
+// Returns the faces deleted.
 static int delete_faces_where(const std::function<bool(const Vb &, const std::array<WORD, 3> &)> &doomed)
 {
     int gone = 0;
@@ -1330,8 +1306,7 @@ static void save(bool shared, bool add_colors = false, const MergeReq *merge = n
         if (!in(h, 8) || !in(dst, (size_t)v.count * v.stride)) { mstatus("%s: vertex data out of range - not saved", key.c_str()); return; }
         memcpy(&f[dst], v.data, (size_t)v.count * v.stride);
     }
-    // spheres first (their blocks lie before the index data in every model, but positions are taken before any
-    // block moves anyway)
+    // spheres first (positions are taken before any block moves)
     for (auto &b : S.subs) {
         size_t r = blk(0x34) + b.rec * 0x38;
         if (in(r, 0x38)) memcpy(&f[r + 0x0C], b.recp + 0x0C, 16);   // sphere radius + centre
@@ -1403,12 +1378,8 @@ static void save(bool shared, bool add_colors = false, const MergeReq *merge = n
     }
     S.dirty = false;
     if (!shared && private_model(S.model, S.name) != lower(S.model)) {
-        // a NEW copy for this prop: the shared model in memory goes back to what it was, so the other props using
-        // it look right whether or not the engine keeps the model cached over the reload. (A prop that already has
-        // its own copy keeps showing the edit - nothing else uses that model.)
-        // Only what differs is written back (like an undo), and the bounds go back to the values the engine
-        // loaded: a full rewrite (every vertex + every index list + recomputed bounds) preceded the two reloads
-        // that came up with no props drawn (2026-10-11).
+        // a new copy for this prop: the shared model in memory goes back to what it was (only what differs is written
+        // back, bounds restored), so other props using it look right after the reload
         for (int gi = 0; gi < S.nv; gi++)
             if (memcmp(S.P[gi], origp(gi), stridep(gi))) memcpy(S.P[gi], origp(gi), stridep(gi));
         for (int t = 0; t < (int)S.texs.size(); t++)
@@ -1434,8 +1405,8 @@ static std::string lower(std::string s)
     return s;
 }
 
-// model "mesh\misc\rocks\rock_gen_01.pax" + prop "Rock03" -> "mesh\custom\rock_gen_01_rock03.pax", the prop's own
-// copy (a model that already is this prop's copy keeps its name: saved again in place)
+// "mesh\misc\rocks\rock_gen_01.pax" + prop "Rock03" -> "mesh\custom\rock_gen_01_rock03.pax" (a model that already
+// is this prop's copy keeps its name)
 static std::string private_model(const std::string &model, const std::string &prop)
 {
     const char bs = (char)0x5C;
@@ -1458,9 +1429,8 @@ static std::string data_key(const std::string &rel)
     return lower(k);
 }
 
-// Merge: python tools/paxmerge.py <the prop's copy> <part.glb> --at x y z [--fit s] [--ground --center], run on a
-// worker thread (the window keeps painting); its output goes to paxmerge.log next to the exe. Tools folder: the
-// GLADIUS_TOOLS environment variable, else <exe folder>..\tools.
+// Merge: python tools/paxmerge.py <the prop's copy> <part.glb> --at x y z [...] on a worker thread (log: paxmerge.log
+// next to the exe). Tools folder: GLADIUS_TOOLS, else <exe folder>\..\tools.
 static const UINT WM_MESH_MERGED = WM_APP + 25;
 struct MergeRun { SaveJob *job; std::string pax_path, own; DWORD exit; std::string log, split_json; };
 static void finish_after_merge(SaveJob *job, const std::string &own);
@@ -1552,8 +1522,7 @@ static DWORD WINAPI merge_thread(void *arg)
     return 0;
 }
 
-// Merge GLB... -> python paxmerge.py none <glb> --preview <file> (same shaping options): the wireframe the
-// placement shows. Done -> WM_MESH_PREVIEWED -> C_MERGE with the preview bytes.
+// Merge preview: python paxmerge.py none <glb> --preview <file> -> the wireframe shown while placing.
 static const UINT WM_MESH_PREVIEWED = WM_APP + 27;
 struct PreviewRun { Cmd c; std::string out; DWORD exit; };
 static DWORD WINAPI preview_thread(void *arg)
@@ -1725,9 +1694,8 @@ static bool faces_camera(const CamFrame &cf, const float *M, int g)
     return false;
 }
 
-// occlusion: a depth map of the mesh as the camera sees it (320 x 240 over the 640 x 480 overlay), drawn from the
-// projected groups (needs project() first) - a brush then skips vertices something nearer covers (the ground behind a
-// rock). Rebuilt when a stroke starts and when the camera moves.
+// Occlusion: a 320 x 240 depth map of the mesh as the camera sees it, so a brush skips vertices something nearer
+// covers. Rebuilt when a stroke starts and when the camera moves.
 enum { ZW = 320, ZH = 240 };
 static std::vector<float> g_zb;
 static float g_zcam[9];
@@ -1781,7 +1749,7 @@ static bool visible(int g)                              // not covered by a near
     return z <= best + (std::max)(0.05f, z * 0.015f);
 }
 
-// groups under the brush at the cursor (needs project() first): weight = smooth falloff
+// Groups under the brush at the cursor (needs project() first), weighted by a smooth falloff.
 static void brush_groups(const CamFrame &cf, const float *M, std::vector<std::pair<int, float>> &out)
 {
     out.clear();
@@ -1819,7 +1787,7 @@ static int sel_count()
     return n;
 }
 
-// world displacement for a cursor step (dnx, dny) at camera depth z: view plane, or along one world axis
+// World displacement for a cursor step at camera depth z: in the view plane, or along one world axis.
 static bool drag_delta(const CamFrame &cf, const float *M, float dnx, float dny, float z, const float centre[3],
                        float out[3])
 {
@@ -1858,7 +1826,7 @@ static void move_selection_world(const float *M, const float dw[3])
     }
 }
 
-// rotate about the world z axis through the selection's centre (degrees) and / or scale (factor)
+// Rotate about world z through the selection's centre (degrees) and / or scale.
 static void transform_selection(const float *M, float deg, float scale)
 {
     float c[3];
@@ -1877,9 +1845,8 @@ static void transform_selection(const float *M, float deg, float scale)
 }
 
 // ------------------------------------------------------------------------------------------------ Grab sub-mesh
-// Click picks the sub-mesh under the cursor (Shift adds); drag moves the picked sub-meshes - their OWN vertices,
-// not the welded seam neighbours of other sub-meshes (the piece comes away clean); wheel turns about z, Shift+wheel
-// scales, both about the pieces' centre. Normals turn with the piece (no recompute: hard edges stay as they are).
+// Grab sub-mesh: click picks the sub-mesh under the cursor (Shift adds); drag moves only its own vertices; wheel turns,
+// Shift+wheel scales, about the pieces' centre. Normals turn with the piece.
 static std::vector<int> piece_verts()
 {
     std::vector<int> v;
@@ -1911,7 +1878,7 @@ static void select_pieces()                             // the picked pieces sho
     if (g_mwnd) PostMessageA(g_mwnd, WM_MESH_PICKED, 0, (LPARAM) new std::vector<int>(S.pieces));
 }
 
-// move (world delta), turn (degrees about the world axis `axis`: 0 / 3 = z, 1 = x, 2 = y, through c) and / or scale
+// Move (world delta), turn (degrees about axis 0/3 = z, 1 = x, 2 = y, through c) and / or scale.
 static void rot_axis(const float v[3], int axis, float ca, float sa, float out[3])
 {
     float e[3] = {0, 0, 0};
@@ -1952,7 +1919,7 @@ static void paint_selection(const CamFrame &cf, const float *M)
     for (auto &h : hit) S.gsel[h.first] = g_sel_remove ? 0.0f : 1.0f;
 }
 
-// vertex colour toward c by t (0..1), per channel incl. alpha
+// Vertex colour toward c by t (0..1), per channel incl. alpha.
 static uint32_t mix_color(uint32_t a, uint32_t c, float t)
 {
     uint32_t o = 0;
@@ -2020,10 +1987,8 @@ static void brush_step(const CamFrame &cf, const float *M)    // smooth / inflat
 }
 
 // ------------------------------------------------------------------------------------------------ texture paint
-// The cursor's ray (model space) against the visible triangles; the nearest hit's UV (vertex UVs interpolated:
-// stride 24 at +16, 28 / 36 at +20 - D3D convention, v down) picks the texel in the sub-mesh's texture. The brush
-// radius goes screen -> world at the hit depth -> texels through that triangle's UV / world scale. The decoded top
-// level is painted, only its touched 4x4 blocks are encoded each frame; the stroke's end rebuilds the mip levels.
+// Texture paint: the cursor's ray against the visible triangles picks a texel via the hit's interpolated UV. The
+// decoded top level is painted, touched 4x4 blocks are re-encoded each frame, and the stroke's end rebuilds the mips.
 static const float *uvp(int gi) { return (const float *)(S.P[gi] + (stridep(gi) == 24 ? 16 : 20)); }
 
 static bool ray_tri(const float o[3], const float d[3], const float *a, const float *b, const float *c, float &t,
@@ -2068,7 +2033,7 @@ static void encode_dirty(int ti)                        // touched blocks of the
 
 static void mark_painted(const CamFrame &cf, const float *M, int ti, int hit);
 
-// the nearest visible triangle under the cursor (model-space ray from the scene camera): its S.tris index or -1
+// The nearest visible triangle under the cursor (model-space ray): its S.tris index, or -1.
 static int ray_pick(const CamFrame &cf, const float *M, float o[3], float d[3], float &best, float &bu, float &bv)
 {
     float dw[3];
@@ -2158,8 +2123,7 @@ static std::array<WORD, 3> canon_tri(WORD a, WORD b, WORD c)   // the same face 
     return {a, b, c};
 }
 
-// faces of the painted texture under the brush circle (any corner inside it, facing the camera) + the hit face:
-// Save compares them with the faces that read the changed texels (see paint_splits)
+// Mark faces of the painted texture under the brush (+ the hit face) for paint_splits.
 static void mark_painted(const CamFrame &cf, const float *M, int ti, int hit)
 {
     float mx = ov_x(G.nx), my = ov_y(G.ny), R = s_radius;
@@ -2204,8 +2168,8 @@ static void texpaint_finish()                           // stroke end: every mip
     }
 }
 
-// Merge GLB, click to place: the press's ray hits the model -> that point (model space); a miss uses where the ray
-// meets the horizontal plane through the model's origin. Then the merge runs there (save, paxmerge, reload).
+// Merge GLB, click to place: the press's ray hits the model (else the horizontal plane through its origin); the merge
+// then runs there (save, paxmerge, reload).
 static MergeReq g_place;
 static bool g_place_armed;
 static std::vector<float> g_ghost;                      // the part's wireframe (edges, 6 floats), floor at z = 0
@@ -2260,7 +2224,7 @@ static bool tri_in_ghost(const GhostXf &gx, const float *a, const float *b, cons
     return gx.inside(m);
 }
 
-// where a placement would land now: the cursor's ray on the model, else on the origin's horizontal plane
+// Where a placement would land now: the cursor's ray on the model, else on the origin's horizontal plane.
 static bool place_point(const CamFrame &cf, const float *M, float out[3])
 {
     float o[3], d[3], best, bu, bv;
@@ -2276,10 +2240,8 @@ static bool place_point(const CamFrame &cf, const float *M, float out[3])
     return false;
 }
 
-// Collision view while placing: existing sub-meshes whose sphere meets the ghost's box are drawn orange; a height map
-// of their triangles under the ghost's footprint (GH x GH cells, highest surface per cell, model space) marks the
-// ghost edges whose ends lie below that surface red - where the part sinks into the ground / cuts into a wall. The
-// map is rebuilt only when the placement changes.
+// Collision view while placing: sub-meshes the ghost's box meets are drawn orange, and ghost edges below the
+// existing surface (height map under the footprint) red. Rebuilt only when the placement changes.
 enum { GH = 64 };
 static struct {
     float key[7];                                       // at xyz, turn, lean x / y, scale of the last build
@@ -2347,9 +2309,7 @@ static bool ghost_buried(const float *p)                 // model-space point be
     return h > -1e29f && p[2] < h - 0.05f;
 }
 
-// The part's footprint for the preview (as paxmerge footprint(): ~96 cells across the box's longer side, in the
-// box's frame; a cell the ghost's edges pass over keeps their height range - an approximation of paxmerge's "fully
-// covered" cells) - magenta = faces in a covered cell at or above the part's lowest surface there (what gets cut).
+// The part's footprint for the preview (approximating paxmerge footprint()): magenta = faces that would be cut.
 static struct {
     float key[8];
     float c[3], ax[3][3], h[3], cs, pad;
@@ -2550,10 +2510,8 @@ static void do_press(const CamFrame &cf, const float *M)
             break;
         }
         int sub = S.tris[hit].sub;
-        // the sub-meshes the current selection touches (Select brush, All, Select sub-mesh): pressing on one of
-        // them grabs them all - a group of buildings moves together; pressing elsewhere picks just that piece
-        // (a selection made by picking = those pieces; a brush selection counts a sub-mesh with at least a quarter of
-        // its vertices selected, so the few seam vertices it shares with the ground do not drag the terrain along)
+        // sub-meshes the selection touches (at least a quarter of their vertices): pressing on one grabs them all; pressing
+        // elsewhere picks just that piece
         std::vector<int> selected;
         if (S.sel_is_pieces) selected = S.pieces;
         else
@@ -2690,8 +2648,7 @@ static void run_cmd(const Cmd &c, const float *M)
         build_topology();
         break;
     case C_DELETE: {
-        // faces whose three corners are all selected go; the sub-mesh's list is re-stripped (vertices stay in the
-        // buffer, unused)
+        // faces with all three corners selected go; the list is re-stripped (vertices stay, unused)
         if (!sel_count()) { mstatus("select vertices first - faces with all three corners selected are deleted"); break; }
         begin_op("delete faces");
         int gone = delete_faces_where([](const Vb &vb, const std::array<WORD, 3> &t) {
@@ -2985,8 +2942,8 @@ bool mesh_key(int vk)                                   // game window keys: tru
     return true;
 }
 
-// numpad: 4 / 6 turn, 8 / 2 tilt about x, 7 / 9 tilt about y, + / - scale (5 degrees / 5 %, Shift 1), 5 reset -
-// the merge placement while it is armed, else the picked pieces of Grab sub-mesh
+// Numpad: 4 / 6 turn, 8 / 2 tilt about x, 7 / 9 about y, + / - scale (5 degrees / 5 %, Shift 1), 5 reset. Applies to
+// the armed merge placement, else to the picked pieces.
 static void numpad_key(int vk, bool fine, const float *M)
 {
     float step = fine ? 1.0f : 5.0f, sc = fine ? 1.01f : 1.05f;
@@ -3079,8 +3036,7 @@ static void notify_info()                               // game thread: snapshot
 }
 
 // ------------------------------------------------------------------------------------------------ texture import
-// image file (PNG / TGA / BMP / JPG via WIC) -> RGBA at the texture's size -> mip chain -> DXT1 / DXT5 levels laid
-// out like the Xbox texture (level after level, 4x4 blocks)
+// Image file (PNG / TGA / BMP / JPG via WIC) -> RGBA at the texture's size -> mips -> DXT1 / DXT5 levels.
 static bool load_image(const char *path, std::vector<uint8_t> &rgba, UINT &w, UINT &h)
 {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -3277,7 +3233,7 @@ static void dxt_decode(const uint8_t *src, int w, int h, int fmt, std::vector<ui
         }
 }
 
-// PNG via WIC as 32bpp BGRA (the PNG encoder's own format - asking for RGBA can come back as BGRA)
+// PNG via WIC as 32bpp BGRA.
 static bool write_png(const char *path, const std::vector<uint8_t> &rgba, UINT w, UINT h)
 {
     HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

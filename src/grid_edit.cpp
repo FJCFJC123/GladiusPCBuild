@@ -1,16 +1,8 @@
-// Battle grid painter (gladius_editor.exe, Level page): paint the arena's grid layers in a battle, live, and save them
-// into the arena's level .grd.
-//
-// The engine's battle grid is one byte per cell at 0x39C2C0[x * 32 + y] (32 x 32 cells of 2 units: cell c spans world
-// 2c - 1 .. 2c + 1). The .grd loader (0x56C40) ORs each GRIDFILE of the encounter into it by layer name: NoMove 1,
-// NoMoveNoCursor 3, KnockbackOnly 4, Gate 8, NoLargeUnits 0x10, MapCenter 0x20, LineOfSightPass 0x40, NoTeleport 0x80
-// (props stamp No_Stand / No_Cursor into bits 1 / 2 too). The cursor and the pathfinder read those bytes, so a painted
-// cell works at once.
-//
-// The file: the encounter's first GRIDFILE ("$l\expanse\expanseDunes\expanseDunesnomove.grd" - the level's own grid;
-// the others are start positions). tools/grd.py: u32 version 2, u32 layers used, 30 names of 32 bytes ("F" + name,
-// "E" in unused slots), then 32 x 32 u32 cells row by row in y (bit n = in layer n). The painter keeps its own copy of
-// that file's layers (prop stamps are not baked in) and writes it back as a loose file.
+// Battle grid painter (editor, Level page): paint the arena's grid layers live in a battle and save the level's .grd.
+// The engine's grid is one byte per cell at 0x39C2C0[x * 32 + y] (32 x 32 cells of 2 units), built by the .grd loader
+// (0x56C40) from the encounter's GRIDFILEs by layer name (NoMove 1, NoMoveNoCursor 3, KnockbackOnly 4, Gate 8,
+// NoLargeUnits 0x10, MapCenter 0x20, LineOfSightPass 0x40, NoTeleport 0x80). The cursor and pathfinder read it, so a
+// painted cell works at once. The level's own grid is the encounter's first GRIDFILE; file layout: tools/grd.py.
 #include "port.h"
 #include <string>
 #include <vector>
@@ -42,13 +34,12 @@ static struct {
     std::string key;                                    // "data/levels/.../x.grd"
     std::vector<std::string> names;                     // the file's layers (without the F prefix)
     uint32_t cells[GSIZE][GSIZE];                       // [y][x] bit masks over names
-    float heights[GSIZE + 1][GSIZE + 1];                // ground at the cell corners (2i - 1, 2j - 1): the overlay
-                                                        // follows slopes (a flat square per cell looked shifted)
+    float heights[GSIZE + 1][GSIZE + 1];                // ground at the cell corners, so the overlay follows slopes
     bool dirty;
 } G;
 
-// the encounter's start-position files (its later GRIDFILEs, one per TEAM: layers Start1, Start2...). The engine reads
-// them when the battle is set up, so painted starts take effect from the next battle; the overlay shows them always.
+// Start-position files (the encounter's later GRIDFILEs, one per team). The engine reads them at battle setup, so
+// painted starts apply from the next battle.
 struct StartFile {
     std::string key;
     std::vector<std::string> names;
@@ -172,9 +163,8 @@ static bool load_level_grid()                           // game thread
         if (read_grd(k, f.names, f.cells)) g_sf.push_back(f);
         else port_log("grid: could not read start file %s\n", k.c_str());
     }
-    // ground at the corners for the overlay: the median of a 3 x 3 patch around each corner (one probe landing on a
-    // rock edge / hole made a spike where four cells meet), holes filled from the neighbours, then corners standing
-    // out past every neighbour pulled back to the neighbours' median
+    // ground at the cell corners for the overlay: median of a 3 x 3 patch per corner, holes filled from the neighbours,
+    // outlier corners pulled back to their neighbours' median
     static bool have[GSIZE + 1][GSIZE + 1];
     for (int y = 0; y <= GSIZE; y++)
         for (int x = 0; x <= GSIZE; x++) {
@@ -233,7 +223,7 @@ static int layer_bit(const char *name, bool add)       // the file's bit for a l
     return (int)G.names.size() - 1;
 }
 
-// the battle floor under a screen point: the ray against a horizontal plane, refined with the floor height there
+// The battle floor cell under a screen point.
 static bool cell_under(float nx, float ny, int &cx, int &cy)
 {
     CamFrame f;
@@ -371,7 +361,7 @@ void grid_draw(const CamFrame &cf)                      // game thread, overlay 
                              {2.0f * x + 1, 2.0f * y - 1, G.heights[y][x + 1] + 0.05f},
                              {2.0f * x + 1, 2.0f * y + 1, G.heights[y + 1][x + 1] + 0.05f},
                              {2.0f * x - 1, 2.0f * y + 1, G.heights[y + 1][x] + 0.05f}};
-            // the layer shown: the selected one first, else the first layer the cell is in
+            // shown layer: the selected one, else the first layer the cell is in
             uint32_t col = 0;
             int Ls = g_layer, bs = -1;
             int st = start_at(x, y);

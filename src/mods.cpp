@@ -1,21 +1,7 @@
-// Loose data folder next to gladius.bec ("mods"): a file under <game dir>\data\ wins over the copy in
-// gladius.bec, and files gladius.bec does not have at all can be added the same way (new levels, models...).
-//
-// The engine already reads loose files when it runs without gladius.bec (-ignore_bec, file manager 0x4F8830:
-// +0x18 = bec open, +0x19 = -ignore_bec), and the choice is made per file: every lookup goes through the bec
-// index (0x1FA680, thiscall(mgr = 0x4F8830, expanded path "d:\data\...", out size)), and a miss takes the loose
-// path. Three callers are redirected here:
-//   0x1FCAC6  file open (0x1FCA70): a miss used to FAIL the open (0x1FCAD0 jz -> return 0); now it falls
-//             through to the loose CreateFile block 0x1FCAE0 (which also clears the file's from-bec flag 0x10)
-//   0x1C89CD  stream open (0x1C8990): a miss already falls through to its loose CreateFile
-//   0x1AE920  file exists (0x1AE8E0): a loose file counts as present
-// The lang_ENG.bec fallback inside 0x1FA680 (0x1FA7F7) is left alone.
-// .pak bundles (buildpaks\*.pak, e.g. gamestartup.pak: items / classdefs / skills / unit tables) are searched before
-// the bec (0x1FA620, thiscall(mgr, name) -> entry or 0) by the whole-file loader 0x1AE670 and the file open; a loose
-// file answers "not in a pak" there too, so its own copy is read (both callers fall back to the bec / loose path).
-//
-// data\audio and data\movies are the disc's own loose files (never in gladius.bec) and are not mods.
-// Netplay: port_mods_crc() (paths + contents) goes into the version hash, so only identical mods play together.
+// Loose data folder ("mods"): a file under <game dir>\data\ replaces the copy in gladius.bec, and files the bec
+// doesn't have can be added. Lookups in the bec index (0x1FA680) and the .pak bundles (0x1FA620) report "not
+// found" for loose files, so the engine's own loose-file path reads them. data\audio and data\movies are not mods.
+// port_mods_crc() (paths + contents) goes into the netplay version hash.
 #include "port.h"
 #include <string>
 #include <vector>
@@ -45,7 +31,7 @@ static uint32_t crc32(const void *data, size_t n, uint32_t crc)
     return ~crc;
 }
 
-// "d:\data\Levels\\x.prp" -> "data/levels/x.prp"
+// "d:\data\Levels\x.prp" -> "data/levels/x.prp"
 static std::string key_of(const char *name)
 {
     std::string k;
@@ -59,6 +45,7 @@ static std::string key_of(const char *name)
     return k;
 }
 
+// Collect every file under dir as lowercase keys (skipping data/audio and data/movies).
 static void scan(const std::string &dir, const std::string &rel, std::unordered_set<std::string> &out)
 {
     WIN32_FIND_DATAA fd;
@@ -77,6 +64,7 @@ static void scan(const std::string &dir, const std::string &rel, std::unordered_
     FindClose(h);
 }
 
+// True when `name` is a loose file (logged once per file and site).
 static bool loose(const char *name, const char *site)
 {
     if (!name) return false;
@@ -96,12 +84,14 @@ typedef void *(__thiscall *BecLookup)(void *mgr, const char *name, uint32_t *siz
 static const BecLookup bec_lookup = (BecLookup)0x1FA680;
 
 void port_editor_note_file(const char *name);         // editor.cpp: the level's prop files
+// Bec index lookup: loose files are "not in the bec".
 static void *__fastcall lookup_hook(void *mgr, void *, const char *name, uint32_t *size)
 {
     port_editor_note_file(name);
     return loose(name, "open") ? nullptr : bec_lookup(mgr, name, size);
 }
 
+// File-exists check: loose files count as present.
 static void *__fastcall exists_hook(void *mgr, void *, const char *name, uint32_t *size)
 {
     return loose(name, "exists") ? (void *)1 : bec_lookup(mgr, name, size);
@@ -110,9 +100,10 @@ static void *__fastcall exists_hook(void *mgr, void *, const char *name, uint32_
 typedef void *(__thiscall *PakLookup)(void *mgr, const char *name);
 static const PakLookup pak_lookup = (PakLookup)0x1FA620;
 
+// .pak lookup: loose files are "not in a pak".
 static void *__fastcall pak_hook(void *mgr, void *, const char *name)
 {
-    // the loader passes the name before path expansion ("$d\Config\x.bin"; $l = data\levels, $t = data\texture)
+    // the name arrives before path expansion ("$d\Config\x.bin"; $l = data\levels, $t = data\texture)
     std::string full = name ? name : "";
     if (full.size() > 2 && full[0] == '$' && (full[2] == 0x5C || full[2] == '/')) {
         char c = (char)tolower((unsigned char)full[1]);
@@ -124,7 +115,7 @@ static void *__fastcall pak_hook(void *mgr, void *, const char *name)
 
 uint32_t port_mods_crc() { return g_crc; }
 
-// Editor: the loose files with this extension ("data/mesh/x.pax" keys)
+// Editor: loose files with this extension, sorted.
 void port_mods_list(const char *ext, std::vector<std::string> &out)
 {
     size_t el = strlen(ext);
@@ -135,8 +126,7 @@ void port_mods_list(const char *ext, std::vector<std::string> &out)
     std::sort(out.begin(), out.end());
 }
 
-// Editor: the folder again after it saved files (new files are found from the next load on; files the engine
-// already has open need a loading screen - the editor's reload)
+// Editor: rescan the folder after saving files.
 void port_mods_rescan()
 {
     std::unordered_set<std::string> now;
@@ -156,12 +146,8 @@ void port_mods_rescan()
 
 static bool install_hooks();
 
-// Sound table caps. Neither loader checks a size:
-//   SoundTbs.pak (0x18E4F0): entries constructed in place into a static 255 x 0x7C table at 0x493DF0
-//   pltbin.pak   (0x1C2E70): the whole file copied into a static 0x6C00-byte buffer at 0x4BF110 (0x4C5D10 = its loaded
-//                flag, 0x4C5D18 = the music player right after)
-// Ten more arenas (265 tables / 20 music records) ran past both and crashed later in unrelated code. Both loaders are
-// pointed at bigger buffers here; everything else reaches the entries through pointers the loaders hand out.
+// Sound table caps: SoundTbs.pak (255 tables) and pltbin.pak (0x6C00 bytes) load into fixed buffers without size
+// checks, and more arenas overflow them. Point both loaders at bigger buffers.
 static __declspec(align(16)) uint8_t g_soundtbs[1024 * 0x7C];
 static __declspec(align(16)) uint8_t g_pltbin[0x40000];
 
@@ -185,6 +171,7 @@ static void raise_sound_caps()
              (unsigned)(sizeof g_soundtbs / 0x7C), (unsigned)sizeof g_pltbin, 0x6C00u);
 }
 
+// Scan the loose folder, hash it for netplay and install the lookup hooks.
 void port_mods_init()
 {
     raise_sound_caps();
@@ -226,6 +213,7 @@ void port_mods_init()
     if (keys.size() > 20) port_log("  ... and %u more\n", (unsigned)(keys.size() - 20));
 }
 
+// Redirect the bec / pak lookups and let a bec miss fall through to the loose open.
 static bool install_hooks()
 {
     struct { DWORD site, target; void *fn; } calls[] = {{0x1FCAC6, 0x1FA680, (void *)lookup_hook},

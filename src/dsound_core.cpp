@@ -1,9 +1,6 @@
-// Xbox DirectSound -> software mixer -> WASAPI. Xbox buffers/streams are plain C functions taking pThis, except the
-// stream's XMediaObject methods (Process etc.), which the game calls through a vtable.
-//
-// Sources: buffers (PCM or Xbox ADPCM in game-written memory, play/loop/position) and streams (queued media
-// packets, completed when consumed). Each source is decoded, resampled (linear) to the output rate and mixed with
-// its volume and mix-bin routing (speaker bins -> stereo). Cursors report the mixer's real position.
+// Xbox DirectSound -> software mixer -> WASAPI. Sources are buffers (PCM or Xbox ADPCM in game memory) and streams
+// (queued packets, completed when consumed). Each is decoded, resampled to the output rate and mixed with its volume
+// and speaker mix bins. Cursors report the mixer's real position. Stream XMediaObject methods go through a vtable.
 const char *port_ini_name();   // port_main.cpp: gladiusport.ini (gladiusport_padN.ini for -gnpad=N if present)
 #include "dsound.h"
 #include "handles.h"
@@ -76,8 +73,8 @@ static const DWORD XMEDIAPACKET_STATUS_SUCCESS = 0, XMEDIAPACKET_STATUS_PENDING 
 static const WORD WAVE_FORMAT_XBOX_ADPCM = 0x69;
 
 // ------------------------------------------------------------------------------------------------ Xbox ADPCM
-// IMA ADPCM, 36 bytes per channel per block = 4-byte header (int16 history, uint8 step index) + 32 bytes of
-// nibbles = 64 samples; channels interleave in 4-byte groups after the headers.
+// IMA ADPCM: 36 bytes per channel per block (4-byte header + 32 bytes of nibbles = 64 samples); channels interleave in
+// 4-byte groups after the headers.
 static const int k_ima_steps[89] = {
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107,
     118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963,
@@ -117,8 +114,8 @@ struct Packet {
     DWORD used;                                          // bytes consumed
 };
 
-// Fixed-size packet queue (plain data, no heap): sources are game memory (memory container), and a netplay state
-// sync copies them between machines - a std::deque would carry the other PC's heap pointers.
+// Fixed-size packet queue (no heap): sources are game memory synced between netplay machines, so they can't hold
+// heap pointers.
 struct PacketRing {
     static const DWORD CAP = 32;
     Packet q[CAP];
@@ -143,8 +140,7 @@ struct PacketRing {
     It end() { return {this, n}; }
 };
 
-// Sources are game memory: the game holds their addresses, and with the memory container on they (and the list of
-// them, below) are synced between netplay machines with everything else. Only the WASAPI output is machine-local.
+// Sources are game memory (synced between netplay machines with the container on); only the WASAPI output is local.
 struct Source {
     GAME_ALLOCATED
     // format
@@ -174,7 +170,7 @@ struct Source {
 };
 
 static CRITICAL_SECTION g_mix;
-// the mixer's list of live sources: in the container's shared page when it is on (synced game memory)
+// the mixer's list of live sources (synced game memory when the container is on)
 struct SourceList {
     DWORD count;
     Source *list[255];
@@ -198,9 +194,8 @@ static void mix_init_lock()
     }, nullptr, nullptr);
 }
 // Netplay state sync freeze: while a sync hashes and copies game memory, game threads may not change sound state
-// (submit / flush / play...) - a packet submitted between the host's hashing and copying landed in the copied queue
-// while its status word (another page, hashed before) still said "done" on the client -> the game refilled a queued
-// buffer -> full-scale noise (2026-10-07). The mixer keeps playing; the syncing thread itself is exempt.
+// (a submit in between left queue and status word out of step on the client). The mixer keeps playing; the syncing
+// thread is exempt.
 static volatile LONG g_api_freeze;
 static volatile DWORD g_freezer_tid, g_mixer_tid;
 static void api_gate()
@@ -232,7 +227,7 @@ static DWORD frames_to_bytes(const Source *s, DWORD f)
     return s->tag == WAVE_FORMAT_XBOX_ADPCM ? f / 64 * s->align : f * s->align;
 }
 
-// one frame from contiguous memory at frame index f (block-relative for ADPCM via the cache)
+// One frame at frame index f from contiguous memory (ADPCM decoded through the block cache).
 static void read_mem_frame(Source *s, const BYTE *base, DWORD f, LONG block_id, float out[2])
 {
     if (s->tag == WAVE_FORMAT_XBOX_ADPCM) {
@@ -254,9 +249,7 @@ static void read_mem_frame(Source *s, const BYTE *base, DWORD f, LONG block_id, 
     }
 }
 
-// [netplay] session trace of audio state the game can observe (status changes it reads, packet completions).
-// The mixer runs on the WASAPI clock, so these land on machine-dependent frames; dtrace is a no-op outside a
-// session.
+// Netplay session trace of audio state the game can observe (no-op outside a session).
 void dtrace(const char *fmt, ...);                      // gn_core.cpp
 static void audio_trace_status(const void *src, DWORD status, const char *what)
 {
@@ -279,7 +272,7 @@ static void complete_packet(Packet &pk, DWORD status, DWORD size)
         SetEvent(vh_real(pk.p.hCompletionEvent));
 }
 
-// next source frame; false = nothing to play (buffer ended / stream starved)
+// Next source frame; false = nothing to play (buffer ended / stream starved).
 static bool next_frame(Source *s, float out[2])
 {
     if (!s->is_stream) {
@@ -312,7 +305,7 @@ static bool next_frame(Source *s, float out[2])
             s->adpcm_block = -1;
             continue;
         }
-        // block ids must differ per packet: use the packet buffer address mixed with the block
+        // block ids differ per packet: the packet buffer address mixed with the block
         LONG block_id = (LONG)((DWORD)pk.p.pvBuffer + f / frames_per_block(s));
         read_mem_frame(s, (const BYTE *)pk.p.pvBuffer, f, block_id, out);
         s->frame++;
@@ -327,7 +320,7 @@ static bool next_frame(Source *s, float out[2])
 
 static float db_gain(LONG mb) { return mb <= -10000 ? 0.0f : powf(10.0f, mb / 2000.0f); }
 
-// per source-channel stereo gains from volume + mix bins (speaker bins only; FX sends / I3DL2 are not rendered)
+// Per source-channel stereo gains from volume + mix bins (speaker bins only; FX sends / I3DL2 not rendered).
 static void source_gains(const Source *s, float g[2][2])
 {
     float v = db_gain(s->volume);
@@ -355,20 +348,20 @@ static void source_gains(const Source *s, float g[2][2])
         g[ch][0] = l > g[ch][0] ? l : g[ch][0];
         g[ch][1] = r > g[ch][1] ? r : g[ch][1];
     }
-    if (s->channels == 1) {                              // mono: the decoders copy the sample into both slots
-        g[1][0] = g[1][1] = 0;                           // (out[1] = out[0]) - gain it once, not twice (+6 dB:
-    }                                                    // voice lines over music overloaded the limiter, 2026-10-07)
+    if (s->channels == 1) {                              // mono: the decoders copy the sample into both slots - gain it once
+        g[1][0] = g[1][1] = 0;
+    }
 }
 
-// 4-point, 3rd-order Hermite between y0 and y1
+// 4-point, 3rd-order Hermite interpolation between y0 and y1.
 static inline float hermite(float ym1, float y0, float y1, float y2, float t)
 {
     float c1 = 0.5f * (y1 - ym1), c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2, c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
     return ((c3 * t + c2) * t + c1) * t + y0;
 }
 
-// Look-ahead peak limiter: gain follows the loudest sample in the next LA frames (attack completes before the
-// peak arrives) and recovers slowly - the whole signal is turned down, the waveform itself is never bent.
+// Look-ahead peak limiter: gain follows the loudest sample in the next LA frames and recovers slowly, so the waveform
+// itself is never clipped.
 static const int LA = 96;                                // 2 ms at 48 kHz
 static float g_la_buf[LA][2], g_la_target[LA], g_lim_gain = 1.0f;
 static int g_la_pos;
@@ -397,8 +390,7 @@ static void limit(float *out, UINT frames)
 
 void dsound_dump_streams(const char *tag);
 static volatile LONG g_sync_hold;                       // netplay state sync running: the mixer outputs silence
-// glitch counters (netplay logs them per turn segment): device buffer ran dry before we refilled it (audible gap),
-// mix() calls that took > 5 ms, and mix() calls in which a playing stream had no data (starved)
+// glitch counters: device buffer ran dry, mix() took > 5 ms, a playing stream had no data
 static volatile LONG g_stat_underrun, g_stat_slowmix, g_stat_starve;
 void dsound_audio_stats(uint32_t out[3])
 {
@@ -505,7 +497,7 @@ static void mix(float *out, UINT frames)
 }
 
 // ------------------------------------------------------------------------------------------------ output
-// [debug] RecordAudio=N: also write the first N seconds of the mix to build\audio.wav (float stereo)
+// [debug] RecordAudio=N: also write the first N seconds of the mix to build\audio.wav
 static FILE *g_rec;
 static DWORD g_rec_left, g_rec_total;
 
@@ -598,8 +590,7 @@ static DWORD WINAPI mixer_thread(void *)
         }
     }
     std::vector<float> scratch(g_out_rate / 100 * 2);
-    // -gnmute: a second instance on this PC mixes (and records) as usual but stays silent - two copies of the same
-    // sounds ~100 ms apart (the spectator trails the player) sound like crunching
+    // -gnmute: a second instance on this PC mixes as usual but stays silent
     const bool muted = strstr(GetCommandLineA(), "-gnmute") != nullptr;
     if (muted)
         port_log("audio: muted (-gnmute)\n");
@@ -642,6 +633,7 @@ static void audio_start()
 }
 
 // ------------------------------------------------------------------------------------------------ objects
+// Create a buffer or stream source.
 static Source *new_source(const XWaveFormat *f, bool stream)
 {
     mix_init_lock();
@@ -702,7 +694,7 @@ static void destroy_source(Source *s)
 
 static DWORD g_fake_dsound[16];
 
-// --- stream object: vtable for XMediaObject (AddRef, Release, GetInfo, GetStatus, Process, Discontinuity, Flush)
+// Stream object: XMediaObject vtable (AddRef, Release, GetInfo, GetStatus, Process, Discontinuity, Flush).
 struct StreamVtbl {
     void *fn[7];
 };
@@ -759,7 +751,7 @@ static HRESULT __stdcall st_Process(Stream *s, XMediaPacket *in, XMediaPacket *o
 static HRESULT __stdcall st_Discontinuity(Stream *s) { return S_OK; }
 bool gn_is_main_thread();                               // gn_core.cpp
 
-// netplay trace: who flushes a stream (game return addresses above this call)
+// Netplay trace: who flushes a stream.
 static void trace_flush(const Stream *s, const void *sp0)
 {
     const DWORD *sp = (const DWORD *)sp0;
@@ -830,7 +822,7 @@ HRESULT __stdcall dsound_DirectSoundCreateStream(const XStreamDesc *d, Stream **
     return S_OK;
 }
 
-// --- buffers
+// Buffers
 HRESULT __stdcall dsound_IDirectSoundBuffer_Lock(Source *b, DWORD off, DWORD n, void **p1, DWORD *n1, void **p2,
                                                  DWORD *n2, DWORD flags)
 {
@@ -946,7 +938,7 @@ HRESULT __stdcall dsound_IDirectSoundBuffer_SetLoopRegion(Source *b, DWORD start
 HRESULT __stdcall dsound_IDirectSoundBuffer_SetHeadroom(Source *b, DWORD h) { return S_OK; }
 HRESULT __stdcall dsound_IDirectSoundBuffer_SetFilter(Source *b, void *f) { return S_OK; }
 
-// --- streams (C entry points; pThis = the stream object)
+// Streams (C entry points; pThis = the stream object)
 HRESULT __stdcall dsound_IDirectSoundStream_SetVolume(Stream *s, LONG v) { return dsound_IDirectSoundBuffer_SetVolume(s->src, v); }
 HRESULT __stdcall dsound_IDirectSoundStream_SetFrequency(Stream *s, DWORD f) { return dsound_IDirectSoundBuffer_SetFrequency(s->src, f); }
 HRESULT __stdcall dsound_IDirectSoundStream_SetMixBins(Stream *s, const XMixBins *mb)
@@ -971,7 +963,7 @@ void __stdcall dsound_DirectSoundDoWork() {}            // the mixer runs on its
 
 }
 
-// netplay state sync (gladiusnet.dll): no mixing while game memory is hashed or replaced
+// Netplay state sync (gladiusnet.dll): no mixing while game memory is hashed or replaced.
 void dsound_sync_pause(bool on)
 {
     mix_init_lock();
@@ -984,8 +976,7 @@ void dsound_sync_pause(bool on)
     }
 }
 
-// netplay audio hunt: every stream's packet queue (buffer, size, bytes played, status word) - logged around a
-// client's state-sync apply to see what the host's copy disagrees with
+// Netplay diagnostics: every stream's packet queue, logged around a client's state-sync apply.
 void dsound_dump_streams(const char *tag)
 {
     mix_init_lock();
@@ -1006,9 +997,8 @@ void dsound_dump_streams(const char *tag)
     }
 }
 
-// netplay state sync: the game memory the mixer writes while it plays (sources, completion words of queued packets).
-// A client marks these pages changed so the host always resends them - the mixer can keep playing through a sync.
-// (addr, size) pairs into `pairs` (room for `max`); returns the total (call with max 0 to size the buffer)
+// Netplay state sync: game memory the mixer writes while playing (sources, completion words), resent by the host every
+// sync. (addr, size) pairs into `pairs` (room for `max`); returns the total (max 0 = just count).
 int dsound_sync_touched_n(uint32_t *pairs, int max)
 {
     std::vector<std::pair<uint32_t, uint32_t>> out;

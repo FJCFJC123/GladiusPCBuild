@@ -1,11 +1,6 @@
-// Soft reboot (leaving the campaign world map, quitting to the menu): the game's FUN_001CCBC0 shuts its systems
-// down, keeps the last frame on screen (PersistDisplay) and calls XLaunchNewImageA("D:\default.xbe", &flag) - on the
-// Xbox a reboot into the same title, which then reads the flag back with XGetLaunchInfo and skips its intro.
-// Both are statically linked XAPI (0x16A5F6, 0x16A719; stdcall, 2 args) and were trapping on kernel calls. Here a
-// relaunch of this title starts a fresh gladius.exe with the launch data (launch.bin, read back by the new
-// XGetLaunchInfo once) and the window's placement / borderless state; the new window opens hidden at the same spot
-// and shows itself on its first frame, then signals the old process, which exits - one window on screen, every
-// system restarted clean, like the console. Other images (the dashboard) are refused (ERROR_NOT_SUPPORTED).
+// Soft reboot (leaving the world map, quitting to the menu). The game calls XLaunchNewImage to reboot into
+// itself. Here that starts a fresh gladius.exe with the launch data (launch.bin) and the window placement; the new
+// window takes over when its first frame is up and the old process exits. Other titles are refused.
 #include "port.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -20,6 +15,7 @@ static BYTE g_launch_data[LAUNCH_DATA];
 void d3d_window_handoff(int l, int t, int r, int b, int show, bool borderless, HANDLE ev);   // d3d_core.cpp
 bool d3d_window_state(int *l, int *t, int *r, int *b, int *show, bool *borderless);
 
+// Folder of gladius.exe, with a trailing backslash.
 static std::string exe_dir()
 {
     char p[MAX_PATH];
@@ -28,7 +24,7 @@ static std::string exe_dir()
     return p;
 }
 
-// the command line without the program name and without this module's own switches (and their values)
+// The command line without the program name and without this module's own switches and their values.
 static std::string user_args()
 {
     const char *c = GetCommandLineA();
@@ -69,6 +65,7 @@ static std::string user_args()
     return out;
 }
 
+// XLaunchNewImage replacement: relaunch this title and hand the window over.
 static DWORD __stdcall launch_new_image(const char *path, const BYTE *data)
 {
     port_log("reboot: XLaunchNewImage('%s')\n", path ? path : "(dashboard)");
@@ -124,6 +121,7 @@ static DWORD __stdcall launch_new_image(const char *path, const BYTE *data)
     return 0;
 }
 
+// XGetLaunchInfo replacement: the launch data passed by a soft reboot, once.
 static DWORD __stdcall get_launch_info(DWORD *type, BYTE *data)
 {
     if (!g_have_launch)
@@ -135,6 +133,7 @@ static DWORD __stdcall get_launch_info(DWORD *type, BYTE *data)
     return 0;
 }
 
+// Value of a command-line switch ("" when absent).
 static std::string arg_value(const char *name)
 {
     const char *c = strstr(GetCommandLineA(), name);
@@ -154,6 +153,7 @@ static std::string arg_value(const char *name)
     return v;
 }
 
+// Hook XLaunchNewImage / XGetLaunchInfo and read the launch data when started by a soft reboot.
 void port_reboot_init()
 {
     static const BYTE launch_pro[] = {0xB8, 0x00, 0xBF, 0x37, 0x00};   // mov eax, 0x37BF00

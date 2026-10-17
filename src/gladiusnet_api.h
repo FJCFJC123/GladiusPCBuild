@@ -1,7 +1,6 @@
-// gladiusnet.dll interface (online versus). The netplay code ships as a prebuilt DLL next to gladius.exe; its
-// source is kept separately. gladiusport.dll loads it at startup ([net] Netplay=1, gn_hooks.cpp) and calls it
-// through this table; without it the game runs offline (the frame hook and the deterministic-mode hooks stay).
-// The other direction: gladiusnet.dll links against gladiusport.dll's exports (gp_api.h).
+// gladiusnet.dll interface (online versus, shipped prebuilt). gladiusport.dll loads it at startup when [net]
+// Netplay=1 (gn_hooks.cpp) and calls it through this table; without it the game runs offline. gladiusnet.dll in
+// turn links against gladiusport.dll's exports (gp_api.h).
 #pragma once
 #include "gn.h"
 
@@ -12,9 +11,8 @@ struct GnNetApi {
     void (*install)();                   // startup, before the game thread runs: code hooks (AI Simulator)
     void (*init)(GnCtx *c);              // first frame, game thread
     void (*remote_log)(const char *line);    // client: forward a diagnostic line to the host
-    // Per frame after the pads are sampled into c->padState: bot input, lobby screens, turn hand-off syncs,
-    // versus save pick, lockstep exchange (skipped while the record/replay harness runs). true = a lobby,
-    // browser or session is up (the harness waits).
+    // Per frame after the pads are sampled: bot input, lobby screens, hand-off syncs, save pick, lockstep exchange.
+    // true = a lobby, browser or session is up.
     bool (*frame)(GnCtx *c, int stateId, int sub, bool harness);
     // After the harness and the save screen: AI-vs-AI timer, session trace, lobby pad blanking.
     void (*after)(GnCtx *c, int stateId, int sub);

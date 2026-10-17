@@ -1,9 +1,5 @@
-// Editor help (gladius_editor.exe): hover tips for every control of the editor window, and the Level page's guide box -
-// a reference that flips between the battle grid layers and the collision tools (it follows the painter you turn on,
-// and highlights the layer / tool selected).
-//
-// Tips are matched after the windows are built: buttons / check boxes by their caption (prefix), edit boxes, lists and
-// drop-downs by the label beside (or above) them - so the pages need no changes of their own.
+// Editor help: hover tips for every editor control, and the Level page guide (battle grid layers / collision tools).
+// Tips are matched to controls by caption or by the label beside them, so the pages need no changes of their own.
 #include "port.h"
 #include <string>
 #include <vector>

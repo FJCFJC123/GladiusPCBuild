@@ -1,7 +1,5 @@
-// Battle skill tracer: logs the Skirmish stage machine (a skill / attack in progress) - which stage a stalled skill
-// sits in. Skirmish::Update 0x97920 (cdecl kero, skirmish; one call 0x99C51, kero+0x42D0 = current skirmish):
-// stage byte +0x1C (1 LOADING .. 0x11 SCRIPT - the engine's own debug names below), stage timer float +0x20,
-// unit +0x28, skill +0xFC (+8 id, +0xC flags). Read only: never changes game state.
+// Battle skill tracer: logs each skirmish (skill in progress) stage change of Skirmish::Update (0x97920) and warns
+// when a stage takes long. Read only.
 #include "port.h"
 #include <stdint.h>
 #include <string.h>
@@ -12,6 +10,7 @@ static const char *const STAGE[] = {"NONE", "LOADING", "PRESWING_MOVEA", "PRESWI
                                     "DISTANCEDELAY", "HITS_ARE_DONE", "COST", "SCRIPT", "DONE"};
 static const char *stage_name(uint8_t s) { return s < sizeof STAGE / sizeof STAGE[0] ? STAGE[s] : "?"; }
 
+// True when n bytes at p are committed, accessible memory.
 static bool readable(const void *p, size_t n)
 {
     MEMORY_BASIC_INFORMATION mi;
@@ -19,6 +18,7 @@ static bool readable(const void *p, size_t n)
            (const BYTE *)p + n <= (const BYTE *)mi.BaseAddress + mi.RegionSize;
 }
 
+// Skirmish summary for the log: unit, skill, skill id and flags.
 static void describe(const BYTE *sk, char *out, size_t n)
 {
     const BYTE *skill = *(const BYTE *const *)(sk + 0xFC), *unit = *(const BYTE *const *)(sk + 0x28);
@@ -31,6 +31,7 @@ static void describe(const BYTE *sk, char *out, size_t n)
 }
 
 typedef void(__cdecl *UpdateFn)(void *kero, BYTE *sk);
+// Wraps Skirmish::Update: logs stage changes and stages that take 5 / 10 / 20 / 40 / 80 s.
 static void __cdecl skirmish_update(void *kero, BYTE *sk)
 {
     static const BYTE *last_sk;
@@ -55,14 +56,9 @@ static void __cdecl skirmish_update(void *kero, BYTE *sk)
     }
 }
 
-// ---- async package load race (single player only; summon / shape-change / crystal skills hung in LOADING)
-// 0x1E63C0 starts an async package load (call 0x1AE630) and only then marks its loader slot "loading":
-//   1E63C8  66 C7 46 12 01 00   mov word ptr [esi+0x12], 1
-// On a PC disk the read can complete on the I/O threads first - the completion callback 0x1E5B20 sets the slot to
-// 2 ("done") - and this write then turned it back into 1 for good: Skirmish LOADING (0x95140) waits for the
-// summon's model (FUN_00050B60 -> FUN_001E5B50: slot +0x12 == 2) forever. Seen as Undead Summoner "Skeleton 1" /
-// Galdr skills stalling at random. Netplay's I/O gate (gn_core.cpp, deterministic mode) already kept completions
-// out of that window; single player had nothing. The write now leaves a finished load alone.
+// Async package load race: 0x1E63C0 starts a load, then marks its slot "loading" (1E63C8). If the load already
+// finished on an I/O thread, that write reset "done" (2) back to 1 and skills waiting on the model hung forever.
+// mark_loading leaves a finished load alone.
 static __declspec(naked) void mark_loading()
 {
     __asm {
@@ -74,6 +70,7 @@ static __declspec(naked) void mark_loading()
     }
 }
 
+// Patch the "loading" write at 0x1E63C8 into a call to mark_loading.
 static void install_load_race_fix()
 {
     BYTE *p = (BYTE *)0x1E63C8;
@@ -88,6 +85,7 @@ static void install_load_race_fix()
     port_log("fix: async package load no longer overwrites a completed load (1E63C8)\n");
 }
 
+// Install the load race fix and the skirmish tracer (call 0x99C51).
 void port_battle_trace_init()
 {
     install_load_race_fix();

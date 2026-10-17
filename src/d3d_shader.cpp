@@ -1,13 +1,11 @@
-// Engine shader programs on the D3D11 side: LoadVertexShaderProgram puts a (tagged) program at a program-memory
-// address, SelectVertexShaderDirect picks the program at an address together with a vertex attribute format
-// (VAF: 16 slots x {stream, offset, format, tess}), SetPixelShaderProgram picks a (tagged) pixel shader.
+// Engine shader programs on the D3D11 side: LoadVertexShaderProgram puts a tagged program at a program-memory address,
+// SelectVertexShaderDirect picks one with a vertex attribute format, SetPixelShaderProgram picks a tagged pixel shader.
 #include "d3d.h"
 #include "container.h"
 #include <map>
 
-// Program memory (address -> source hash of the program loaded there). Game memory with the container on (shared
-// page +0x800, the 136 NV2A program slots): after a state sync the engine believes the HOST's programs are loaded
-// and does not reload them, so this table must be the host's too (2026-10-07: client drew with stale programs).
+// Program memory (address -> source hash). In game memory (shared page +0x800, 136 NV2A slots) when the container is
+// on: after a state sync the engine assumes the host's programs are loaded, so this table must be the host's too.
 static const DWORD PROG_SLOTS = 136;
 static DWORD g_prog_local[PROG_SLOTS];
 static std::map<DWORD, DWORD> g_prog_extra;            // addresses past the NV2A range (not expected)

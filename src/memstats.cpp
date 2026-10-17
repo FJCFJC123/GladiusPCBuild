@@ -1,6 +1,5 @@
-// [debug] MemStats=1: who allocates game memory, how much, on which thread.
-// Counts every allocation that goes through the XAPI wrappers (process heap, private heaps, "physical",
-// VirtualAlloc) per thread role; "mem:" lines every 60 s with live / peak bytes and counts since the last report.
+// [debug] MemStats=1: game allocations per kind (heap, private heap, physical, virtual) and thread role, logged every
+// 60 s. [debug] HeapCheck=1: refuse and log stale frees in the engine's tracked heap.
 #include "port.h"
 #include "memstats.h"
 #include <intrin.h>
@@ -23,6 +22,7 @@ static SRWLOCK g_range_lock = SRWLOCK_INIT;
 static const char *const KIND_NAMES[MS_KINDS] = {"heap", "privheap", "phys", "virtual"};
 static const char *const ROLE_NAMES[MS_ROLES] = {"other", "main", "cri", "io"};
 
+// Read the [debug] MemStats / HeapCheck switches.
 void memstats_init(const char *ini)
 {
     g_hc_on = GetPrivateProfileIntA("debug", "HeapCheck", 0, ini) != 0;
@@ -35,13 +35,14 @@ void memstats_init(const char *ini)
     port_log("debug: MemStats on (mem: lines every 60 s)\n");
 }
 
+// Set this thread's role for the statistics.
 void memstats_set_role(int role)
 {
     if (g_on && g_role_tls != TLS_OUT_OF_INDEXES)
         TlsSetValue(g_role_tls, (void *)(uintptr_t)(role + 1));
 }
 
-// game threads by entry point (xapi_CreateThread)
+// Thread role by game thread entry point.
 int memstats_role_for_thread(uint32_t start)
 {
     switch (start) {
@@ -66,6 +67,7 @@ static int current_role()
     return v ? (int)(v - 1) : MS_OTHER;
 }
 
+// Count an allocation for this thread's role.
 void memstats_alloc(int kind, const void *p, size_t size)
 {
     if (!g_on || !p)
@@ -85,8 +87,7 @@ void memstats_alloc(int kind, const void *p, size_t size)
     ReleaseSRWLockExclusive(&g_range_lock);
 }
 
-// frees are charged to the freeing thread's role; live bytes per role can go negative when one role frees what
-// another allocated - the per-kind total is what matters for sizing
+// Count a free (charged to the freeing thread's role; per-role live bytes can go negative).
 void memstats_free(int kind, size_t size)
 {
     if (!g_on)
@@ -98,7 +99,7 @@ void memstats_free(int kind, size_t size)
 
 bool memstats_enabled() { return g_on; }
 
-void memstats_tick()                                    // watchdog thread, every 50 ms
+void memstats_tick()                                    // watchdog thread: logs every 60 s
 {
     static DWORD last;
     if (!g_on)
@@ -126,12 +127,9 @@ void memstats_tick()                                    // watchdog thread, ever
     }
 }
 
-// ── HeapCheck ───────────────────────────────────────────────────────────
-// The engine's tracked heap (alloc header 0x20 bytes in front of the user pointer, free 0x176A30) sits on CRT
-// malloc -> xapi_RtlAllocateHeap -> the Windows process heap, which D3D11 / the driver also use. A block the game
-// frees twice may already belong to a D3D11 object by the second free (2026-10-06 dumps: d3d11 CDeviceChild vtable
-// in the "header") -> the unlink in 0x176A30 writes through it. Here every game heap block is tracked; a tracked
-// free of a block that is no longer live is logged with both freeing stacks and skipped.
+// HeapCheck: the engine's tracked heap (0x20-byte header before each block, free 0x176A30) sits on the Windows process
+// heap, which D3D11 shares. A double free could corrupt a D3D11 object, so every game heap block is tracked and a
+// free of a block that is no longer live is logged and skipped.
 struct FreeRec {
     uint32_t stack[10];
     uint32_t seq;
@@ -147,7 +145,7 @@ extern volatile DWORD g_port_probe_tid;                   // port_main.cpp: thre
 
 bool heapcheck_enabled() { return g_hc_on; }
 
-// game return addresses on the current stack (image .text, preceded by a call)
+// Game return addresses on the current stack (in .text and preceded by a call).
 void memstats_game_stack(uint32_t *out, int n, const void *from)
 {
     const uint32_t *sp = (const uint32_t *)from;
@@ -166,6 +164,7 @@ void memstats_game_stack(uint32_t *out, int n, const void *from)
         out[k++] = 0;
 }
 
+// Format a stack as " AAAAAA BBBBBB ...".
 void memstats_fmt_stack(char *o, int n, const uint32_t *s, int count)
 {
     int w = 0;
@@ -174,6 +173,7 @@ void memstats_fmt_stack(char *o, int n, const uint32_t *s, int count)
     o[w < n ? w : n - 1] = 0;
 }
 
+// HeapCheck: a game heap block became live.
 void heapcheck_alloc(const void *p)
 {
     if (!g_hc_on || !p)
@@ -186,6 +186,7 @@ void heapcheck_alloc(const void *p)
     ReleaseSRWLockExclusive(&g_hc_lock);
 }
 
+// HeapCheck: a game heap block was freed (remembered with its stack in a ring of 64K records).
 void heapcheck_free(const void *p)
 {
     if (!g_hc_on || !p)
@@ -207,7 +208,7 @@ void heapcheck_free(const void *p)
     ReleaseSRWLockExclusive(&g_hc_lock);
 }
 
-// 0x176A30 entry (thiscall tracker, user pointer): 1 = go ahead, 0 = refuse
+// Tracked free 0x176A30: 1 = go ahead, 0 = refuse (stale free).
 static int __cdecl tracked_free_ok(const uint8_t *user, const void *sp)
 {
     if (!user)
@@ -252,6 +253,7 @@ static int __cdecl tracked_free_ok(const uint8_t *user, const void *sp)
     return 0;
 }
 
+// Hook at 0x176A30: ask tracked_free_ok, then run the displaced instructions or return.
 static __declspec(naked) void tracked_free_hook()
 {
     __asm {
@@ -273,6 +275,7 @@ static __declspec(naked) void tracked_free_hook()
     }
 }
 
+// Hook the engine's tracked free when HeapCheck is on.
 void heapcheck_install()
 {
     if (!g_hc_on)

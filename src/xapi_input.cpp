@@ -1,5 +1,5 @@
-// Xbox XInput / XPP device enumeration -> Windows XInput (loaded dynamically) + keyboard for player 1.
-// Xbox gamepads report 8 analog buttons (A B X Y Black White LT RT) and digital d-pad/start/back/thumbs.
+// Xbox XInput / device enumeration -> SDL2 game controllers or Windows XInput, plus the keyboard for player 1.
+// Xbox pads report 8 analog buttons (A B X Y Black White LT RT) and digital d-pad / start / back / thumbs.
 #include "d3d.h"
 #include "container.h"
 #include "handles.h"
@@ -54,6 +54,7 @@ static XInputSetStateFn g_set;
 
 static bool g_sdl;                                    // SDL2 game controllers (input_sdl.cpp) instead of XInput
 
+// Pick the controller backend: SDL2, else the first XInput DLL found.
 static void load_xinput()
 {
     static bool tried;
@@ -80,10 +81,8 @@ struct Port {
     DWORD packet;
     XGamepad last;
 };
-// Input-layer state the game's logic depends on (packet numbers, "last reported" device masks, the handles it
-// keeps = port addresses). With the memory container on it lives in the container's shared page, which is game
-// memory for netplay purposes: a state sync copies it with everything else, so the controller connect/disconnect
-// bookkeeping cannot drift between machines (2026-10-07: client closed port 1 right after a session-start sync).
+// Input state the game's logic depends on (packet numbers, device masks, the port handles). With the container on it
+// lives in the shared page, so netplay state syncs keep it identical on every machine.
 struct InputShared {
     Port ports[4];
     DWORD last_mask[2];
@@ -99,9 +98,8 @@ static InputShared *input_shared()
 #define g_ports (input_shared()->ports)
 #define g_last_mask (input_shared()->last_mask)
 
-// Game port -> XInput user index. Connected controllers fill game ports in order, whatever XInput slot Windows
-// gave them (a pad in slot 1 or 2 is still player 1). Rescanned at most every 500 ms: XInputGetState on an
-// empty slot is slow.
+// Game port -> XInput index: connected pads fill game ports in order. Rescanned at most every 500 ms (XInputGetState
+// on an empty slot is slow).
 static int g_pad_of_port[4] = {-1, -1, -1, -1};
 static int g_pad_count;
 static DWORD g_scan_tick;
@@ -133,7 +131,7 @@ static void scan_pads()
     g_pad_count = n;
 }
 
-// [input] Keyboard = auto (default: only while no controller is connected) | on | off
+// [input] Keyboard = auto (only while no controller is connected) | on | off
 static int g_keyboard_mode = -1;                      // 0 off, 1 on, 2 auto
 
 static bool keyboard_active()
@@ -148,11 +146,12 @@ static bool keyboard_active()
     return g_keyboard_mode == 1 || (g_keyboard_mode == 2 && g_pad_count == 0);
 }
 
-static DWORD injected_ports();                    // ports used by [debug] Press= (defined below)
+static DWORD injected_ports();                    // ports used by [debug] Press=
+// Connected ports as a bit mask (port 0 always: pad or keyboard).
 static DWORD gamepad_mask()
 {
     scan_pads();
-    DWORD m = 1 | injected_ports();               // port 0 always present (player 1: pad or keyboard)
+    DWORD m = 1 | injected_ports();
     for (int p = 1; p < g_pad_count; p++)
         m |= 1u << p;
     return m;
@@ -160,7 +159,7 @@ static DWORD gamepad_mask()
 
 static bool key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
-// [debug] Press=600:START,1400:A,... holds a button on player 1 for 6 frames from that frame (testing aid)
+// [debug] Press=600:START,1400:A,P2B,... holds a button for 6 frames from that frame (testing aid, dev builds)
 struct InjectedPress {
     DWORD frame;
     int digital, analog;                               // XB_* digital mask or analog index (-1 = none)
@@ -203,6 +202,7 @@ static void load_presses()
         port_log("debug: %d injected button presses\n", g_npresses);
 }
 
+// Read the controller behind a game port.
 static bool get_pad(DWORD port, WinState *s)
 {
     if (port > 3)
@@ -222,6 +222,7 @@ static DWORD injected_ports()
     return g_press_ports;
 }
 
+// One port's Xbox gamepad state: injected presses, controller, and the keyboard on port 0.
 static void read_port(DWORD port, XGamepad *g)
 {
     memset(g, 0, sizeof *g);
@@ -245,7 +246,7 @@ static void read_port(DWORD port, XGamepad *g)
         if (b & 0x0020) g->wButtons |= XB_BACK;
         if (b & 0x0040) g->wButtons |= XB_LTHUMB;
         if (b & 0x0080) g->wButtons |= XB_RTHUMB;
-        // analog buttons combine with injected presses / keyboard (max), like the digital ones (or)
+        // analog buttons combine with injected presses / keyboard by max
         const struct { WORD bit; int idx; } pads[] = {{0x0100, XB_WHITE}, {0x0200, XB_BLACK}, {0x1000, XB_A},
                                                       {0x2000, XB_B}, {0x4000, XB_X}, {0x8000, XB_Y}};
         for (auto &p : pads)
@@ -275,9 +276,8 @@ static void read_port(DWORD port, XGamepad *g)
     }
 }
 
-// Frame hook (gn_hooks.cpp): once per frame, before the engine polls the pads, this machine's
-// controllers are sampled into 4 slots (+0 DWORD connected, +4 XGamepad); during a lockstep session
-// or a harness record/replay the engine then reads the agreed slots instead of the live controllers.
+// Frame hook (gn_hooks.cpp): sample this machine's controllers into 4 slots (+0 connected, +4 XGamepad). During a
+// lockstep session or replay the engine reads the agreed slots instead (port_pads_override).
 static bool g_pads_override;
 static BYTE g_pads[4][24];
 
@@ -350,7 +350,7 @@ DWORD __stdcall xapi_XInputGetCapabilities(HANDLE h, XCapabilities *caps)
 
 }   // extern "C"
 
-// Player 1's Y (Triangle) newly pressed since the previous call - for port-side debug hooks (DevMenus)
+// Player 1's Y newly pressed since the previous call (debug hooks).
 bool port_player1_y_pressed()
 {
     static bool was;
@@ -360,8 +360,7 @@ bool port_player1_y_pressed()
     return edge;
 }
 
-// Player 1's page buttons newly pressed (save screen paging, save_pages.cpp): -1 = LB / white (keyboard Q or
-// PageUp), +1 = RB / black (W or PageDown), 0 = none
+// Player 1's page buttons newly pressed: -1 LB / white (Q, PageUp), +1 RB / black (W, PageDown), 0 none.
 int port_player1_page_pressed()
 {
     static bool was_l, was_r;
@@ -373,8 +372,7 @@ int port_player1_page_pressed()
     return d;
 }
 
-// Player 1's left / right newly pressed (d-pad, left stick, keyboard arrows - the arrows drive the d-pad):
-// -1 left, +1 right, 0 none (Options screen Video page, options_video.cpp)
+// Player 1's left / right newly pressed (d-pad, stick, arrows): -1 left, +1 right, 0 none.
 int port_player1_lr_pressed()
 {
     static bool was_l, was_r;
@@ -386,7 +384,7 @@ int port_player1_lr_pressed()
     return d;
 }
 
-// Player 1's up / down newly pressed (d-pad, left stick, keyboard arrows): -1 up, +1 down, 0 none
+// Player 1's up / down newly pressed (d-pad, stick, arrows): -1 up, +1 down, 0 none.
 int port_player1_ud_pressed()
 {
     static bool was_u, was_d;

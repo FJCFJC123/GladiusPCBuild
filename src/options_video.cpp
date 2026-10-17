@@ -1,11 +1,6 @@
-// Options screen: a "Video" page next to the game's own (Effects / Music / Voice volume, Vibration, Subtitles, Combo
-// Meter). The retail OptionState (vtable 0x350614) is a list menu: rebuild (vtable +0x10, 0x132D50) clears the list
-// (0x125520), adds items (0x125660 thiscall(menu, id, label, "")) and sets each value column
-// ([item+0x14]+4 -> 0x13E10(text)) when the item has one (item[8] > 1); update (vtable +0x30, 0x126FD0) runs the base
-// navigation (0x11BF40(pad, 1)), B = cancel / A = accept (both leave the screen), else left / right change the item
-// with index [item+0xA]. LB / RB (Xbox white / black; keyboard Q / W, PageUp / PageDown) switch pages; on the Video
-// page left / right change our settings, which are written to gladiusport.ini at once and applied live where the
-// renderer allows (the rest say "restart"). A / B go to the retail code (it only touches its own values).
+// Options screen "Video" page next to the game's own settings. The retail OptionState (vtable 0x350614) list menu is
+// reused: LB / RB (Q / W, PageUp / PageDown) switch pages; on the Video page left / right change our settings, which
+// are saved to gladiusport.ini at once and applied live where possible (the rest say "restart").
 #include "port.h"
 #include "d3d.h"
 #include "overlay.h"
@@ -21,10 +16,8 @@ int port_player1_lr_pressed();
 int port_player1_ud_pressed();
 
 static bool g_video;                                    // the Video page is showing
-// The Options draw (0x127890) walks the list with a row counter ([esp+0x18], set to 0 at 0x127F53) and draws rows
-// 0..2 as volume sliders (value text only from row 3 on). On the Video page the counter starts at 3 (the store's
-// immediate at 0x127F57), so every row shows its value. The list holds a window of VISIBLE_ROWS settings; up / down
-// move our cursor and slide the window (the list's own scrolling shifts this screen's layout).
+// The Options draw (0x127890) shows rows 0..2 as volume sliders; on the Video page its row counter starts at 3 so every
+// row shows a value. The list shows VISIBLE_ROWS settings at a time; up / down scroll our own window.
 enum { VISIBLE_ROWS = 6 };
 static int g_top, g_cursor;                             // first setting shown, selected setting
 
@@ -69,10 +62,8 @@ static const Setting k_set[] = {
 enum { SET_CORES = 15 };
 enum { NSET = sizeof k_set / sizeof k_set[0] };
 
-// Presets: row 0 of the page ("Preset": Low / Medium / High, Custom once anything is changed by hand). The
-// GladiusPort Builder detects the PC and writes the recommended one at install ([video] Preset + Recommended);
-// the same table lives in builder\gladiusport_builder.py (PRESETS) - keep them equal. Screen Fit / UI Aspect are
-// left alone; CPU Cores = Multi for now (2026-10-10: decided after the long 2-PC test).
+// Presets (row 0: Low / Medium / High, Custom once changed by hand). The builder writes the recommended one at install;
+// the same table is in builder\gladiusport_builder.py (PRESETS) - keep them equal.
 enum { NROWS = NSET + 1, P_CUSTOM = 3 };
 static const char *const k_tier_key[] = {"low", "medium", "high", "custom"};
 static const char *const k_tier_name[] = {"Low", "Medium", "High", "Custom"};
@@ -90,7 +81,7 @@ static const PresetVal k_preset[] = {
     {"Resolution", {"auto", "auto", "auto"}},  {"SingleCore", {"0", "0", "0"}},
 };
 
-// help panel (port overlay, 640x480 game coordinates): what the highlighted setting does and what it costs
+// help panel (overlay, 640x480 game coordinates): what the highlighted setting does and costs
 struct Help {
     const char *text, *cpu, *gpu;
 };
@@ -135,7 +126,7 @@ static void draw_help()
         _snprintf(impact, sizeof impact, "CPU impact: %s      GPU impact: %s", h.cpu, h.gpu);
     }
     text[sizeof text - 1] = 0;
-    // word-wrap the description to the panel (it grows a line instead of running off screen)
+    // word-wrap the description to the panel
     enum { MAX_LINES = 3 };
     const float max_w = 572;
     char lines[MAX_LINES][160];
@@ -181,7 +172,7 @@ static void hide_help()
     ov_end(false);
 }
 
-// current choice: the live renderer state where there is one, else the ini value (nearest choice)
+// current choice: the live renderer state where there is one, else the ini value
 static int current(int i)
 {
     const Setting &s = k_set[i];
@@ -318,7 +309,7 @@ static void build_video(BYTE *self)
         }
         int i = r - 1;
         const Setting &s = k_set[i];
-        // short labels: the value column starts about 14 characters in; * = applies after a restart
+        // short labels: * = applies after a restart
         _snprintf(label, sizeof label, "%s%s%s", r == g_top && g_top > 0 ? "^ " : "", s.label, s.restart ? "*" : "");
         if (r == g_top + VISIBLE_ROWS - 1 && r < NROWS - 1)
             strncat(label, " v", sizeof label - strlen(label) - 1);

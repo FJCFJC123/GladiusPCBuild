@@ -1,11 +1,6 @@
-// Screen-space ambient occlusion ([video] SSAO=1, SSAORadius, SSAOStrength; [debug] ShowAO=1).
-// Input: the G-buffer view depth (opaque engine-program draws, d3d_render.cpp) and the active 3D camera's frustum
-// (cam_activecam 0x4B2808: near +0x274, half extents at near +0x27C / +0x280 - Camera_BuildViewFrustum 0x1AB030).
-// Runs once a frame when the engine enters its 3D particle renderer (fx_render_3d, d3d_render.cpp): the opaque scene
-// is complete, particles and the 2D layer are still to come - neither is darkened.
-// Passes: AO at half resolution (position from depth, normal from neighbouring depths, 12 spiral samples with a
-// per-pixel rotation, Alchemy-style obscurance) -> depth-aware blur, horizontal then vertical -> multiply into the
-// scene colour (blend dest * src). The bound game state is invalidated afterwards so the next draw rebinds it.
+// Screen-space ambient occlusion ([video] SSAO=1, SSAORadius, SSAOStrength; [debug] ShowAO=1). Runs once a frame when
+// the engine enters its 3D particle renderer, so the opaque scene is complete and particles / 2D stay undarkened.
+// Half-resolution AO from the G-buffer depth (12 spiral samples), depth-aware blur, multiplied into the scene colour.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
@@ -240,8 +235,7 @@ static bool camera_tan(float *tx, float *ty)
     if (!(n > 0) || !(hw > 0) || !(hh > 0))
         return false;
     *tx = hw / n, *ty = hh / n;
-    // the projection the frame was really drawn with (shadow pass, from the draws) wins over the camera object - the
-    // camera object may not be the one the world map renders with; logged every 10 s to compare
+    // the projection the frame was really drawn with (from the shadow pass) wins over the camera object
     float P[16], R[16];
     bool have_p = d3d_camera_this_frame(P, R) && P[0] > 1e-4f && P[5] > 1e-4f;
     static DWORD logged;

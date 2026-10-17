@@ -1,20 +1,9 @@
-// Level editor (gladius_editor.exe, port_is_editor): the editor window, level reload and the game-thread
-// file service.
-//
-// Reload (Ctrl+R / Save + Reload): the editor saves level files (.prp ...) into the loose data folder; the engine
-// reads a level's files when its game state initialises. The state manager (0x20E80) takes any pending request
-// in [0x38E43C] - including the current state's own id - as a full change: fade, ExitState of the old object,
-// a fresh state from the factory, InitState (loading screen). So re-requesting the current state reloads the
-// level with the edited files; the data folder is rescanned first so newly saved files are found.
-//
-// Props (.prp, text): the loaded level's prop files are noted as the engine opens them (mods.cpp lookups ->
-// port_editor_note_file); the window reads one through the engine's whole-file loader (0x1AE670, so the .bec or
-// a loose copy - whatever the game itself would read), on the game thread (port_editor_frame, frame hook).
-//
-// .prp grammar (102 retail files): VERSION, then per prop: PROP "name", MODELS "path.pax" | No, LIGHTING ON|OFF,
-// SHADOW ON|OFF, [SCRIPTNAME "..."], HEIGHTS f, [HEIGHTOFFSET f], POS x y z, ROT x y z (radians), ATTRIBUTES n,
-// n x ATTRIBUTE "No_Stand" | "No_Cursor" | "invisible" | "No_Modify_Heights", PROP_END. Lines it does not know
-// are kept as they are.
+// Level editor (gladius_editor.exe): the editor window, level reload, live prop editing and picking.
+// Reload (Ctrl+R / Save + Reload): edited files go to the loose data folder, then the current game state is requested
+// again, which the state manager (0x20E80) treats as a full change - so the level reloads with the edited files.
+// .prp grammar: VERSION, then per prop: PROP "name", MODELS "path.pax" | No, LIGHTING ON|OFF, SHADOW ON|OFF,
+// [SCRIPTNAME "..."], HEIGHTS f, [HEIGHTOFFSET f], POS x y z, ROT x y z (radians), ATTRIBUTES n, n x ATTRIBUTE
+// "No_Stand" | "No_Cursor" | "invisible" | "No_Modify_Heights", PROP_END. Unknown lines are kept as they are.
 #include "port.h"
 #include <string>
 #include <vector>
@@ -28,6 +17,7 @@
 void port_mods_rescan();                                // mods.cpp
 const char *port_game_dir();                            // xapi_file.cpp
 
+// Reload the current level (or battle) with the edited files.
 // ------------------------------------------------------------------------------------------------ reload
 void port_editor_reload()
 {
@@ -37,12 +27,8 @@ void port_editor_reload()
     uint8_t *state = *(uint8_t *const *)(0x38E448 + 0x14);
     int id = state ? *(const int *)(state + 8) : 7;
     if (id == 12) {
-        // a battle is rebuilt from its pre-battle state 11, not from 12 (re-requesting 12 crashed in the state
-        // factory 0x20789: the encounter setup 11 hands over is gone; the Debug Menu restart only resets units,
-        // battle_restart.cpp). State 11's InitState 0x113C50 loads the encounter named by the BString at 0x394DF0
-        // (encounter loader 0x69B20, the dev splash "quick" path does the same) - so files are read again - and with
-        // byte 0x418400 set skips placement: units auto-placed, "Starting encounter", RequestState(12). The PC
-        // build's series battles go 12 -> 11 the same way (League::SetupNextSeriesBattle).
+        // a battle is rebuilt from pre-battle state 11 (re-requesting 12 crashes in the state factory). With byte 0x418400
+        // set, state 11 reloads the encounter (0x394DF0), skips placement and goes on to 12.
         *(volatile uint8_t *)0x418400 = 1;
         *(volatile int *)0x38E43C = 11;
         port_log("editor: battle reload - encounter loaded again (pre-battle state 11, placement skipped)\n");
@@ -103,10 +89,8 @@ void port_editor_note_file(const char *name)            // mods.cpp, every looku
 bool port_read_game_file(const std::string &key, std::string &out);   // bec_read.cpp
 typedef void(__cdecl *MemFree)(void *);
 
-// Ground height (game thread), the way the game asks: WorldMap::HeightCheck 0xF2A50 and the battle's check
-// (0x56FD3) both load their floor collide mask into the select mask [0x380680] and ask their scene
-// (Scene::HeightCheck 0x194620 / 0x194640 -> physics_Mesh::HeightCheck 0x1D38D0) for the highest floor polygon
-// below a point.
+// Ground height (game thread), asked the way the game does: floor collide mask into [0x380680], then the scene's
+// HeightCheck (0x194620 -> physics_Mesh::HeightCheck 0x1D38D0) for the highest floor polygon below a point.
 static struct {
     float pos[3], height;
     bool pending, ok;
@@ -145,8 +129,7 @@ static struct {
 
 static bool ground_at(float x, float y, float z_from, float &out)   // game thread
 {
-    // world map (state 7): scene [0x417D64], floor mask [0x417D58]; battle (12, Battle height check 0x56FD3):
-    // scene [0x39D320], floor mask [0x39C2BC]. Scene::HeightCheck 0x194620 (thiscall: pos, &height, &poly).
+    // world map (state 7): scene [0x417D64], floor mask [0x417D58]; battle (12): scene [0x39D320], floor mask [0x39C2BC]
     void *poly = nullptr;
     const uint8_t *state = *(const uint8_t *const *)(0x38E448 + 0x14);
     int id = state ? *(const int *)(state + 8) : -1;
@@ -177,7 +160,7 @@ static bool ground_height(float x, float y, float z_from, float &out)  // editor
     return true;
 }
 
-// x/y of the God Camera; z = the ground below it when found (else pos[2] is left as it was). false = no camera.
+// x / y of the God Camera; z = the ground below it when found. false = no camera.
 static bool camera_ground(float pos[3], bool &ground)
 {
     const uint8_t *cam = *(volatile LONG *)0x4B2814 ? *(const uint8_t *const *)0x4B2810 : nullptr;
@@ -190,10 +173,8 @@ static bool camera_ground(float pos[3], bool &ground)
     return true;
 }
 
-// No random battles while editing: the world map script (wmglobal.scb OnUpdate) only calls RandomEncounters()
-// while GetIntVar("NoRandomEncounters") == 0 - the developers' own switch ("gvar set, norandomencounters, 1").
-// Int variables: hash table 0x38EA88, lookup 0x25870 (thiscall, name) -> node (+0x0C value). Held at 1 every
-// frame in the editor only (the script's OnInit creates it with 0; the normal game never runs this).
+// No random battles while editing: hold the world map script's "NoRandomEncounters" int variable (hash table
+// 0x38EA88, lookup 0x25870 -> node +0x0C) at 1 every frame.
 static void no_random_encounters()
 {
     void *node = ((void *(__thiscall *)(void *, const char *))0x25870)((void *)0x38EA88, "NoRandomEncounters");
@@ -203,7 +184,7 @@ static void no_random_encounters()
     }
 }
 
-// a few seconds after a prop file loads: how many of its props got a model (diagnostics for reload problems)
+// a few seconds after a prop file loads: how many of its props got a model (reload diagnostics)
 static volatile LONG g_check_at;                        // g_frames value to check at (0 = none)
 static void check_props();
 
@@ -226,8 +207,7 @@ void port_editor_frame()                                // game thread, once per
     std::string path = g_req.done ? std::string() : g_req.path;
     LeaveCriticalSection(&g_cs);
     if (path.empty()) return;
-    // read directly (loose copy, else gladius.bec): the engine's loader 0x1AE670 pumps the asynchronous file
-    // system and must not run from this hook (bec_read.cpp)
+    // read directly (loose copy, else gladius.bec): the engine's loader must not run from this hook (bec_read.cpp)
     std::string text;
     bool ok = port_read_game_file(path, text);
     EnterCriticalSection(&g_cs);
@@ -472,7 +452,7 @@ static void apply_prop()
 
 void port_mods_list(const char *ext, std::vector<std::string> &out);   // mods.cpp
 
-// models to add: those the open file already uses + every loose .pax in data\ (converted GLBs)
+// Models to offer: those the open file uses + every loose .pax in data\ (converted GLBs).
 static void fill_models()
 {
     std::vector<std::string> m;
@@ -530,9 +510,8 @@ static void add_prop()
                                                                       : "under the God Camera (no ground found)");
 }
 
-// Battles take their props from the encounter (.enc): a "PROPSFILE: "$d\encounters\...\x.prp"" line in its
-// header (447 of 834 retail encounters have one). New prop file: <encounter>_props.prp next to the encounter;
-// Save also writes a loose copy of the .enc with that PROPSFILE line (replacing one it already had).
+// Battles take their props from the encounter's PROPSFILE line. New prop file: <encounter>_props.prp next to the
+// encounter; Save also writes a loose copy of the .enc pointing at it.
 static void new_prop_file()
 {
     EnterCriticalSection(&g_cs);
@@ -677,7 +656,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             fill_list();
             status("deleted %s (not saved yet)", n.c_str());
         } else if (id == ID_CAM) {
-            // the God Camera's position (+0x130), or the camera the game draws with when it is off
+            // the God Camera's position (+0x130), or the game's camera when it is off
             if (g_sel < 0) { status("select a prop first"); break; }
             float pos[3] = {g_props[g_sel].pos[0], g_props[g_sel].pos[1], g_props[g_sel].pos[2]};
             bool ground = false;
@@ -687,7 +666,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             if (ground) status("%s moved under the God Camera, onto the ground (z %.2f)", g_props[g_sel].name.c_str(), pos[2]);
             else status("%s moved under the God Camera - no ground found there, height kept", g_props[g_sel].name.c_str());
         } else if (id == ID_GO_WORLD || id == ID_GO_MENU) {
-            // another level: the file list starts over (each level's files are noted as it loads them)
+            // another level: the file list starts over
             EnterCriticalSection(&g_cs);
             g_seen.clear();
             g_seen_changed = true;
@@ -762,9 +741,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 }
 
 // ------------------------------------------------------------------------------------------------ the window
-// One "Gladius Editor" window: on the left a tab strip with the Level / Character / Prop pages (each a child panel;
-// the Prop page is the props editor, g_wnd), on the right the mesh tools (mesh_edit.cpp), which work on whatever
-// the active page opened. Topmost tool window: stays in front while the game window has the focus.
+// The "Gladius Editor" window: Level / Character / Prop pages on the left, mesh tools (mesh_edit.cpp) on the right.
+// Topmost tool window, so it stays in front while the game window has focus.
 static HWND g_frame, g_tab, g_pages[3];
 enum { PAGE_LEVEL, PAGE_CHARACTER, PAGE_PROP };
 static const int PAGE_W = 410, MESH_W = 380, FRAME_H = 960;
@@ -863,7 +841,7 @@ static DWORD WINAPI editor_thread(void *)
     ly = coll_create_ui(lp, ly + 6);
     help_create_guide(lp, ly + 6, FRAME_H - 34 - 48);
 
-    // Character page (phase 5)
+    // Character page
     page_add(g_pages[PAGE_CHARACTER], "STATIC",
              "Character mesh editing (skinned gladiators: edits in the bind pose through the bones, palettes and LOD "
              "masks kept valid) comes next.", 0, 10, 10, 390, 60, -1);
@@ -927,15 +905,10 @@ static DWORD WINAPI editor_thread(void *)
 }
 
 // ------------------------------------------------------------------------------------------------ live props
-// The engine's .prp loader (0x1E1ED0, thiscall: this = the prop file object, arg 1 = file name; keyword table
-// 0x380BE0: VERSION 12, PROP 13, MODELS 14 ... POS 19, ROT 20 ... PROP_END 25, ENDFILE 26) appends each prop
-// (0x84 bytes, ctor 0x1E11A0) to the file object's list (0x1E1150: head +0x14, tail +0x18, node next at +0).
-// Prop: +0x08 -> 4x4 matrix (identity at creation), +0x0C flags (1 lighting off, 2 shadow off), +0x20 POS,
-// +0x2C quaternion (from ROT, 0x1E07F0), +0x3C HEIGHTOFFSET, +0x54/+0x56 grid cell (from x/y, 0x1E02F0),
-// +0x64 ROT, +0x70 HEIGHTS, +0x74 z, +0x78 HEIGHTS + z. Live move = the loader's own steps on that prop.
-// The object (ctor 0x1E2600, vtable 0x358A38) is destroyed when its level goes away (0x1E2680, thiscall; the world
-// map's file was walked after that -> crash in the town menu). A battle's file is loaded by the encounter setup
-// state and carried into the battle state, so the destructor - not a state change - ends a tracked object.
+// Live props: the engine's .prp loader (0x1E1ED0) appends each prop (0x84 bytes, ctor 0x1E11A0) to the file object's
+// list (head +0x14). Prop: +0x08 -> 4x4 matrix, +0x0C flags (1 lighting off, 2 shadow off), +0x20 POS, +0x2C quaternion,
+// +0x3C HEIGHTOFFSET, +0x54/+0x56 grid cell, +0x64 ROT, +0x70 HEIGHTS, +0x74 z. A live move repeats the loader's own
+// steps on that prop. The file object (vtable 0x358A38) is tracked until its destructor (0x1E2680) runs.
 struct PropFile { void *obj; std::string key; };
 static std::vector<PropFile> g_pfiles;                  // game thread writes, editor reads under g_cs
 
@@ -1090,26 +1063,22 @@ static void service_live()                              // game thread
 }
 
 // ------------------------------------------------------------------------------------------------ picking
-// Left click in the game window (editor mode): a ray from the scene camera (view_camera() below: position
-// +0x130, rows +0x140 right / +0x150 up / +0x160 backward - the engine looks down -z, near +0x274, half extents
-// at the near plane +0x27C / +0x280) through the click; the open file's loaded prop whose position lies closest
-// to that ray (in front of the camera, within ~1 unit + 3% of the distance) is selected in the list.
+// Picking: left click in the game window casts a ray from the scene camera; the open file's prop closest to it (in
+// front, within ~1 unit + 3% of the distance) is selected.
 static struct {
     volatile bool pending;
     float nx, ny;                                       // click in -1..1 (y up)
     std::string file;
 } g_pick;
 
-// The 3D view's camera. Camera::Activate (0x1ABFE0, thiscall(bool main)) sets cam_activecam 0x4B2808 and, for
-// the scene camera, also 0x4B280C. By the time our frame hook runs the 2D/UI camera (identity at the origin) is
-// the active one, so the boxes and picking only worked with the God Camera on; the scene camera is 0x4B280C.
+// The 3D view's camera: the scene camera at 0x4B280C (cam_activecam 0x4B2808 is the 2D camera by our frame hook).
 static const uint8_t *view_camera()
 {
     const uint8_t *cam = *(const uint8_t *const *)0x4B280C;
     return cam ? cam : *(const uint8_t *const *)0x4B2808;
 }
 
-// ray from the scene camera through a point of the screen (-1..1, y up): origin o, unit direction d
+// Ray from the scene camera through a screen point (-1..1, y up): origin o, unit direction d.
 static bool camera_ray(float nx, float ny, float o[3], float d[3])
 {
     const uint8_t *cam = view_camera();
@@ -1129,9 +1098,8 @@ static bool camera_ray(float nx, float ny, float o[3], float d[3])
     return true;
 }
 
-// A static prop's box (prop type +0x10 == 1): model instance +0x7C -> model +0x18; the model keeps the min / max
-// of its vertices at +0x5C / +0x68 (model build 0x1E44E0); the prop's world matrix (+0x08, row vectors,
-// translation in row 3) is rebuilt by the engine every frame.
+// A static prop's box: model instance +0x7C -> model +0x18, vertex min / max at +0x5C / +0x68; world matrix at +0x08
+// (row vectors), rebuilt by the engine every frame.
 static bool prop_box(const uint8_t *p, float lo[3], float hi[3], const float **M)
 {
     if (*(const short *)(p + 0x10) != 1) return false;
@@ -1151,7 +1119,7 @@ static void to_world(const float *M, const float l[3], float w[3])
     for (int k = 0; k < 3; k++) w[k] = l[0] * M[k] + l[1] * M[4 + k] + l[2] * M[8 + k] + M[12 + k];
 }
 
-// camera space of the active camera: x right, y up, depth forward (the engine looks down -z)
+// Camera space of the active camera: x right, y up, depth forward (the engine looks down -z).
 static bool cam_frame(CamFrame &f)
 {
     const uint8_t *cam = view_camera();
@@ -1193,7 +1161,7 @@ std::string ed_current_enc()
     return e;
 }
 
-// editor thread (mesh Save): the prop now uses its own copy of the model - MODELS changed, .prp saved, reload
+// Editor thread (mesh Save): point the prop at its own copy of the model, save the .prp, reload.
 bool ed_set_prop_model(const std::string &file, int live, const std::string &model)
 {
     if (file != g_file) return false;
@@ -1222,8 +1190,7 @@ bool ed_prop_alive(const uint8_t *prop)                 // game thread
     return found;
 }
 
-// every frame (game thread): wire boxes around the open file's loaded static props - dim cyan within 80 units,
-// the selection bright yellow
+// Every frame: wire boxes around the open file's static props (dim cyan within 80 units, the selection yellow).
 static void draw_boxes()
 {
     char file[MAX_PATH];
@@ -1240,7 +1207,7 @@ static void draw_boxes()
         return;
     }
     ov_begin();
-    // camera readout (bottom left): position, heading (0 = +x, counter-clockwise) and pitch, God Camera on / off
+    // camera readout (bottom left): position, heading, pitch, God Camera state
     {
         float yaw = atan2f(-cf.bk[1], -cf.bk[0]) * 57.29578f, pitch = asinf(fmaxf(-1.0f, fminf(1.0f, -cf.bk[2]))) * 57.29578f;
         char b[160];
@@ -1284,7 +1251,7 @@ static void draw_boxes()
     shown = true;
 }
 
-// ray (world) against a prop's box in its own space; -1 = miss, else the distance along the ray
+// Ray (world) against a prop's box in its own space: -1 = miss, else the distance along the ray.
 static float ray_box(const float o[3], const float d[3], const uint8_t *p)
 {
     float lo[3], hi[3];
@@ -1360,20 +1327,10 @@ static void service_pick()                              // game thread
     if (best >= 0 && g_wnd) PostMessageA(g_wnd, WM_EDITOR_PICKED, best, 0);
 }
 
-// Drag (left button held after a press on a prop): the prop follows the cursor - the ray meets the horizontal
-// plane at the prop's height, then the prop is snapped onto the floor there - live, via the same steps as Apply.
-// Mouse wheel: the selected prop turns 15 degrees per notch about z.
-// Battle grid heights: the battle setup (0x581B0) loads the encounter's prop file ([0x39D344]) and, for every prop
-// without the No_Modify_Heights attribute, adds a height feature (0xAB510("SceneProp", cell x, cell y, z / 2,
-// top / 2)) to the list at 0x3EE8A8 (next +0, type +8 = 4, cell x +9, cell y +0xA, top height +0xC). Unit heights
-// (0x56F60), the cursor and the cell queries read that list live, so a live move carries the prop's entry along.
-// The battle init (0x7FB90, this = [0x3D2970] + 0x10) then samples those heights into two tables once:
-// 0xA23C0(this + 0x20) - the cell heights the grid overlay is drawn from (0xA2D20(this + 0x20) -> 0x3ED500) - and
-// 0xA2660(this + 0x24) - the step heights between neighbouring cells the pathfinder costs moves with (0xA91B0 via
-// [0x3EDF24], climb / drop limits [0x37D798] / [0x37D79C]). None of the three allocates: after props moved they
-// are run again (once the drag pauses), so paths climb the crate where it is now and the grid shows it there.
-// (No_Cursor / No_Stand are stamped into the grid flags 0x39C2C0 as bits 2 / 1 and are left to the next reload:
-// the level's own .grd flags share those bits.)
+// Drag: the held prop follows the cursor on the horizontal plane at its height, snapped onto the floor, live. Mouse
+// wheel turns it 15 degrees per notch. In a battle each prop also has a height feature in the list at 0x3EE8A8 (read
+// live), but the grid heights (0xA23C0) and pathfinder step heights (0xA2660) are sampled once at battle init, so they
+// are rebuilt after props move. No_Cursor / No_Stand grid flags wait for the next reload.
 static volatile bool g_grid_dirty;
 static DWORD g_grid_moved;
 
@@ -1508,7 +1465,7 @@ bool port_editor_key(int vk)                            // game window: Ctrl+Z /
 {
     if (!port_is_editor()) return false;
     if (mesh_active()) return mesh_key(vk);
-    // props: numpad 3 / 1 raise / lower the selected prop (0.25 units, Shift 0.05) - live
+    // numpad 3 / 1: raise / lower the selected prop (0.25 units, Shift 0.05), live
     if ((vk != VK_NUMPAD1 && vk != VK_NUMPAD3) || g_sel < 0 || g_sel >= (int)g_props.size() || g_props[g_sel].live < 0)
         return false;
     g_drag.file = g_file;

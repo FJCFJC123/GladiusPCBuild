@@ -1,14 +1,6 @@
-// Package lifetime diagnostics for the skinned-draw crash at 0x1EF5BA.
-//
-// The skinned mesh draw 0x1EF3E0 (thiscall(renderer; model, mask, flags), ret 0xC) walks the mesh list of the
-// model's geometry header (model+0x10: count +0x1C / list +0x20, or +0x28 / +0x2C with flags & 1). Crashes
-// there read a garbage mesh pointer: geometry living in a data package (PAK1 loader, 0x1E63C0 load, completion
-// 0x1E5B20, destructor 0x1E6410 frees the buffer at loader+0xC) that was freed or overwritten while a model
-// still pointed into it.
-//
-// Here every completed package records its buffer range (size = bytes read), the destructor marks it freed,
-// and the draw checks the model's header + mesh pointers first: a draw that would crash is logged once (which
-// package, freed how long ago) and skipped instead.
+// Package lifetime diagnostics for the skinned-draw crash at 0x1EF5BA: the skinned mesh draw (0x1EF3E0) read a
+// garbage mesh pointer from geometry in a data package that had been freed or overwritten. Completed packages record
+// their buffer range and the destructor marks it freed; a draw that would crash is logged once and skipped.
 #include "gn.h"
 #include <string.h>
 #include <intrin.h>
@@ -96,9 +88,7 @@ static bool readable(uint32_t addr, uint32_t len)
     return ok;
 }
 
-// ── hardware write watches on shared geometry headers ──────────────────
-// The corrupted headers were always shared by several models. Each header drawn by 2+ models gets a
-// write watch on its mesh count (+0x1C) while a watch slot is free; a legitimate free releases it.
+// Hardware write watches on geometry headers shared by 2+ models (mesh count +0x1C) while a watch slot is free.
 struct HdrSeen { uint32_t hdr, models[3]; int n; };
 static HdrSeen g_seen[64];
 static int g_seenNext;
@@ -145,9 +135,7 @@ static int __cdecl draw_ok(const uint8_t *model, uint32_t flags)
         if (count < 0 || count > 4096) { why = "mesh count out of range"; bad = (uint32_t)count; }
         else if (count && !readable(list, count * 4)) { why = "mesh list unreadable"; bad = list; }
         else {
-            // per-model array parallel to the mesh list (model+0x18, flags & 1: +0x1C): entry -> +8 -> +0x14 is
-            // read for every mesh (0x1EF6FC). Crashes 2026-10-04 13:41 / 14:54 had it 0 with a page-aligned mesh
-            // pointer whose material chain (+4) was garbage (0x1EF5E0).
+            // per-model array parallel to the mesh list (model+0x18, flags & 1: +0x1C): entry -> +8 -> +0x14 is read per mesh
             uint32_t arr = *(const uint32_t *)(model + (flags & 1 ? 0x1C : 0x18));
             if (count && !readable(arr, count * 4)) { why = "model mesh-state array bad"; bad = arr; }
             for (int i = 0; i < count && !why; i++) {
@@ -194,10 +182,8 @@ static int __cdecl draw_ok(const uint8_t *model, uint32_t flags)
     return 0;
 }
 
-// ── frees while a stream read into the block is still queued ────────────
-// On the Xbox the stream thread runs a queued read at once; here it may wait (Windows scheduling, the
-// netplay I/O gate). If the engine frees the destination meanwhile, the late ReadFile writes the file data
-// into memory that now belongs to someone else - invisible to hardware write watches (the OS writes it).
+// Frees while a stream read into the block is still queued: the late ReadFile would write into memory that now
+// belongs to someone else (invisible to write watches, since the OS writes it).
 struct PendingRead { uint32_t buf, size, freedBlock, freedSize; DWORD queuedAt; bool freed; char stack[200]; };
 static PendingRead g_reads[64];
 static volatile LONG g_nreads;

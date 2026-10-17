@@ -1,16 +1,8 @@
-// Sun shadows ([video] Shadows=1, ShadowStrength, ShadowDistance, ShadowMapSize; [debug] ShowShadow=1).
-// Gladius has blob shadows only. Here, during the frame, every opaque engine-program draw that casts (cached vertex
-// buffers; not sky / sun / blob) is recorded: shader, layout, buffers, its indices and its vertex constants. When the
-// engine enters its 3D particle renderer (opaque scene complete - d3d_render.cpp fx_render_3d) the draws are replayed
-// from the sun into a depth map, then one full-screen pass darkens the sun-facing pixels the map says are occluded.
-// Conventions come from the constants themselves (Xbox slot n = HLSL c[n + 96]):
-//   WVP c80..83: rows of the row-vector matrix (clip = sum r4.i * c[80+i]); WV c76..79: rows of the column-vector
-//   matrix (view.k = dot(c[76+k], pos)). Projection P = WVP * WV^-1 per frame, so positions rebuilt from the
-//   G-buffer depth (clip w) land in the engine's own view space - no handedness assumptions.
-//   Screen-space programs map clip -> pixels with c94 / c95 and our translator maps pixels back over rt_size: the
-//   replay sets them so the round trip yields the light's clip space.
-// Sun: brightest light of the engine's light list, read during lit draws and turned into view space with that
-// draw's WV (the list is per object, in object space).
+// Sun shadows ([video] Shadows=1, ShadowStrength, ShadowDistance, ShadowMapSize; [debug] ShowShadow=1). Gladius only has
+// blob shadows. Every opaque program draw that casts is recorded during the frame; when the engine enters its 3D
+// particle renderer the draws are replayed from the sun into a depth map, and a full-screen pass darkens occluded
+// pixels. Matrices come from the constants (Xbox slot n = HLSL c[n + 96]): WVP c80..83 (row-vector), WV c76..79
+// (column-vector), P = WVP * WV^-1. The sun is the brightest light of the engine's light list during lit draws.
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
@@ -289,17 +281,10 @@ static bool init()
     return true;
 }
 
-// ------------------------------------------------------------------------------------------------ culling
-// The engine only draws what its camera frustum keeps, so scenery just off-screen - a wall behind the camera, the
-// Stadium Dreas canopy above the unit camera - cast no shadow into view. Camera_Update (0x1ABD90) builds the
-// culling planes with FUN_001AB550 (fastcall cam; one call, 0x1ABDA5) from the camera's position +0x130,
-// orientation rows +0x140 / +0x150 / +0x160 (backward - the engine looks down -z), near / far +0x274 / +0x278 and half extents at the near
-// plane +0x27C / +0x280 - before it builds the view matrix from the same fields. Here, for that one call, the
-// half extents are widened and the apex pulled back along the view direction, then everything is restored: the
-// planes keep more of the arena, the projection and view stay the game's own. 3D cameras only (not the 2D menu
-// camera s2dCamera 0x3D3050), only while shadows are on.
-// Planes (FUN_001AB550 output): cam+0x1C0 and cam+0x200, two blocks of 4 planes stored x[4] y[4] z[4] d[4]; the
-// 4th of each block is a dummy (0, 0, 0, 1) that keeps everything. All dummies = no frustum culling.
+// Culling: the engine only draws what its camera keeps, so scenery just off-screen cast no shadow into view. For the
+// one culling-plane build (FUN_001AB550, called at 0x1ABDA5) the camera's half extents are widened and its apex pulled
+// back, then restored, so the planes keep more of the arena while view and projection stay the game's. 3D cameras
+// only, only while shadows are on. Planes: cam+0x1C0 and cam+0x200 (4 each, x[4] y[4] z[4] d[4]).
 static int g_no_cull = -1;                              // [debug] NoCull=1
 
 static void planes_keep_all(BYTE *cam)
@@ -332,11 +317,8 @@ static void __fastcall cull_planes(BYTE *cam)
     float *pos = (float *)(cam + 0x130), *fwd = (float *)(cam + 0x160);   // fwd: backward axis
     float *hw = (float *)(cam + 0x27C), *hh = (float *)(cam + 0x280), *fr = (float *)(cam + 0x278);
     float save[6] = {pos[0], pos[1], pos[2], *hw, *hh, *fr};
-    // Toward the sun too: casters of visible ground sit up the sun ray from it (tree canopies above the Stadium
-    // Dreas wall). Apex moved back by B + S and sunward by S: with the widened extents (x2, half-angle tan >= 0.43)
-    // the planes still hold the whole view frustum (as long as S <= 2 tan * B) and its copy shifted S toward the
-    // sun - so, convex, every caster within S along the ray from anything visible. Sun from last frame's shadow
-    // pass (view space, travel direction) -> world with the camera rows (+0x140 right, +0x150 up, +0x160 back).
+    // toward the sun too: casters of visible ground sit up the sun ray, so the apex also moves sunward by S (still
+    // holding the whole view frustum while S <= 2 tan * B). Sun from last frame's shadow pass.
     float sun = 0, sw[3] = {};
     if (g_cull_sun > 0 && g_prev_valid && g_d3d.frame - g_prev_frame <= 2) {
         const float *rows[3] = {(float *)(cam + 0x140), (float *)(cam + 0x150), (float *)(cam + 0x160)};
@@ -417,8 +399,7 @@ void d3d_shadow_record(ID3D11VertexShader *vs, ID3D11InputLayout *layout, ID3D11
             h = (h ^ indices[i]) * 0x100000001B3ull;
         c.idx_hash = h;
     }
-    // Runs of draws with constants the game did not touch in between (same consts_gen; the port's per-draw rows c92 /
-    // c209 equal) share one stored block: the replay then shares their placement maths and constant window too
+    // draws with untouched constants in between share one stored block (and its placement maths on replay)
     const float *prev = g_consts.empty() ? nullptr : &g_consts[g_last_consts * 4];
     if (prev && consts_gen == g_last_gen && !memcmp(prev + (92 + 96) * 4, vsc + (92 + 96) * 4, 16) &&
         !memcmp(prev + 209 * 4, vsc + 209 * 4, 16)) {
@@ -437,7 +418,7 @@ void d3d_shadow_record(ID3D11VertexShader *vs, ID3D11InputLayout *layout, ID3D11
     g_casts.push_back(c);
 }
 
-// the light list of a lit draw: the brightest directional light, in view space, becomes this frame's sun
+// The brightest directional light of a lit draw's light list, in view space, becomes this frame's sun.
 void d3d_shadow_light(const float *vsc, int first, int nlights, int wv)
 {
     (void)wv;
@@ -536,8 +517,7 @@ bool d3d_sun_in_object(const float wvp[16], float out[3])
     return true;
 }
 
-// Character shadowing: surface (draw input space) -> last frame's shadow map, for a draw with column-vector WVP.
-// The map / matrices are one frame old (characters are drawn before this frame's map) but consistent.
+// Character shadowing: surface -> last frame's shadow map (one frame old but consistent).
 bool d3d_shadow_lookup(const float wvp[16], float S[16], ID3D11ShaderResourceView **srv, ID3D11SamplerState **cmp,
                        float *texel, float *strength)
 {
@@ -548,7 +528,7 @@ bool d3d_shadow_lookup(const float wvp[16], float S[16], ID3D11ShaderResourceVie
     return true;
 }
 
-// column-vector matrices (row-major storage) from a draw's constants
+// Column-vector WV matrix (row-major storage) from a draw's constants.
 static void wv_of(const float *vsc, float m[16])
 {
     for (int k = 0; k < 4; k++)
@@ -568,7 +548,7 @@ static void mul4(const float a[16], const float b[16], float o[16])
             o[r * 4 + c] = a[r * 4] * b[c] + a[r * 4 + 1] * b[4 + c] + a[r * 4 + 2] * b[8 + c] + a[r * 4 + 3] * b[12 + c];
 }
 
-// the engine projection from a draw: P = WVP * WV^-1 (must look like a perspective matrix)
+// The engine projection from a draw: P = WVP * WV^-1 (must look like a perspective matrix).
 static bool projection(const float *vsc, float P[16])
 {
     float wv[16], wvp[16], inv[16];
@@ -582,13 +562,9 @@ static bool projection(const float *vsc, float P[16])
 }
 
 
-// ------------------------------------------------------------------------------------------------ caster cache
-// The game culls what the camera does not see, so a wall just off-screen stopped casting onto the visible ground
-// (big shadows popped in and out as the camera / cursor moved - Palace Ibliis, Stadium Dreas). Every caster is
-// kept by identity (shader, layout, buffers, its indices) with its object -> world matrix; one whose matrix and
-// per-object constants (bones, materials, lights) stayed the same over several frames is static and keeps being
-// replayed while off-screen. Animated characters change their bones every frame: never cached. Cleared when 3D
-// stops (loading between arenas); entries that never settled go after 30 frames unseen.
+// Caster cache: casters are kept by identity (shader, layout, buffers, indices) with their object -> world matrix. One
+// whose matrix and per-object constants stay the same for several frames is static and keeps casting while
+// off-screen. Animated characters are never cached. Cleared when 3D stops; unsettled entries go after 30 frames.
 
 struct Cached {
     ID3D11VertexShader *vs;
@@ -679,9 +655,8 @@ void d3d_shadow_apply()
     if (g_d3d.frame - g_last_apply > 60)                // 3D stopped for a while (loading, menus): new arena
         cache_clear();
     g_last_apply = g_d3d.frame;
-    // The scene projection = the one most casters were drawn with (the arena's draws all share WV and WVP; a
-    // skinned character's WV is its world-view while its bones already output world space, so its own
-    // WVP * WV^-1 is not a projection - those are only voters for other, minor groups).
+    // scene projection = the one most casters were drawn with (skinned characters don't vote: their WVP * WV^-1 isn't a
+    // projection)
     float P[16];
     std::map<long long, std::pair<int, size_t>> votes;  // quantised projection -> (count, a cast using it)
     std::vector<long long> key(g_casts.size(), 0);
@@ -715,11 +690,8 @@ void d3d_shadow_apply()
     float Pinv[16];
     if (!invert4(P, Pinv))
         return;
-    // Reference frame R (world -> view), taken from this frame's own draws so it matches what was drawn exactly:
-    // each draw's placement is its object -> view (P^-1 * WVP), or - when that is the identity - its first bone
-    // matrix (Palace Ibliis' arena bakes the camera into its bone rows; AltahrunRuins' uses WV = view). The arena's
-    // static pieces all sit in the arena frame, so the most common placement is the view matrix. Fallback: the
-    // engine camera's view (cam_activecam 0x4B2808 +0xB0, row-vector storage), which can be a frame off.
+    // Reference frame R (world -> view) from this frame's draws: the most common object -> view placement (or first bone
+    // matrix when that is the identity). Fallback: the engine camera's view (0x4B2808 +0xB0), which can be a frame off.
     float R[16], Rinv[16];
     bool have_r = false;
     {
@@ -728,9 +700,7 @@ void d3d_shadow_apply()
         size_t last_k = (size_t)-1;                     // previous voter (shared constant blocks vote alike)
         long long last_h = 0;
         for (size_t k = 0; k < g_casts.size(); k++) {
-            // characters do not vote: each is drawn as many parts sharing its own placement, and with a few units on
-            // screen in an arena made of few big draws (Stadium Dreas) a fighter's frame won - cached scenery was
-            // then replayed relative to it (tree shadows losing chunks, a building's shadow collapsing to a stripe)
+            // characters don't vote: few big arena draws vs. many character parts would let a fighter's frame win
             if (g_casts[k].dynamic)
                 continue;
             if (last_k != (size_t)-1 && g_casts[k].consts == g_casts[last_k].consts) {
@@ -784,7 +754,7 @@ void d3d_shadow_apply()
         memcpy(g_cam_R, R, sizeof g_cam_R);
         g_cam_frame = g_d3d.frame;
     }
-    // the sun and world up: from this frame's brightest lit draw if any, kept in world space for the frames without
+    // the sun and world up: from this frame's brightest lit draw, kept in world space for frames without one
     if (g_sun_frame == g_d3d.frame) {
         float M[16];
         mul4(Pinv, g_sun_wvp, M);
@@ -827,7 +797,7 @@ void d3d_shadow_apply()
     } else {
         return;                                         // no sun known yet
     }
-    {   // [diagnostic] Stadium Dreas canopy: cookie / bark casters per frame, logged when the set changes
+    {   // [diagnostic] Stadium Dreas canopy casters per frame, logged when the set changes
         static UINT last_ck = 0xFFFFFFFF, last_bk;
         static int logs;
         UINT ck = 0, bk = 0, cn = 0;
@@ -842,7 +812,7 @@ void d3d_shadow_apply()
             last_ck = ck, last_bk = bk;
         }
     }
-    // ---- static caster cache: walls / columns / statues culled by the game when off-screen keep casting
+    // static caster cache: scenery culled off-screen keeps casting
     std::vector<Replay> items;
     items.reserve(g_casts.size() + g_cache.size());
     std::unordered_map<unsigned long long, int> frame_pass;   // key -> draws of it so far this frame
@@ -860,14 +830,12 @@ void d3d_shadow_apply()
             mul4(Pinv, wvp, r.ov);                      // object -> view
         }
         items.push_back(r);
-        // Characters / units (the engine's lit shaders) are never cached: one that stood still for a moment and then
-        // walked off left its shadow behind at the old spot for the whole keep time (world map: a trail of them).
+        // characters / units are never cached (a cached one left its shadow behind when it walked off)
         if (!g_use_cache || !have_r || c.dynamic)
             continue;
         float M[16];
         mul4(Rinv, r.ov, M);                            // object -> world
-        // Meshes whose object -> view is the identity carry the camera in their bone rows (dp4 rows of 3 from
-        // c-96): their placement is in the bones, M is just the inverse camera
+        // meshes whose object -> view is the identity carry the camera in their bone rows; M is just the inverse camera
         bool view_bones = true;
         for (int i = 0; i < 16 && view_bones; i++)
             view_bones = fabsf(r.ov[i] - (i % 5 == 0 ? 1.0f : 0.0f)) < 1e-3f;
@@ -875,13 +843,12 @@ void d3d_shadow_apply()
         if (view_bones)
             for (int k = 0; k < 3; k++)                 // first bone's origin: Rinv * (bone row translations, 1)
                 t[k] = Rinv[k * 4] * src[3] + Rinv[k * 4 + 1] * src[7] + Rinv[k * 4 + 2] * src[11] + Rinv[k * 4 + 3];
-        // + where it stands: instances of one prop (a row of identical columns) share buffers and indices
+        // + position: instances of one prop share buffers and indices
         unsigned long long h = cast_key(c) ^
                                ((unsigned long long)lroundf(t[0] * 20) * 0x9E3779B97F4A7C15ull) ^
                                ((unsigned long long)lroundf(t[1] * 20) * 0xC2B2AE3D27D4EB4Full) ^
                                ((unsigned long long)lroundf(t[2] * 20) * 0x165667B19E3779F9ull);
-        // + which pass: the same mesh at the same spot drawn again this frame with other constants (multi-pass
-        // materials - Palace Ibliis white_marble3) gets an entry per pass instead of the passes overwriting each other
+        // + pass: the same mesh drawn again with other constants (multi-pass materials) gets its own entry
         int pass = frame_pass[h]++;
         h ^= (unsigned long long)pass * 0xD6E8FEB86659FD93ull;
         auto it = g_cache.find(h);
@@ -917,9 +884,8 @@ void d3d_shadow_apply()
             continue;
         }
         Cached &e = it->second;
-        // Unchanged = same object -> world and same per-object constants (bones, materials, lights); view_bones
-        // meshes: bone rows compared after taking the camera out (row-block * view^-1, old and new view each),
-        // M (= the inverse camera for them) not at all.
+        // unchanged = same object -> world and per-object constants (bones, materials, lights); for view_bones meshes the bone
+        // rows are compared with the camera taken out
         bool same = true;
         float worst = 0;
         int qmax = view_bones ? 3 : 0;                  // bone 0 rows (Xbox c-96..c-94): its placement
@@ -930,8 +896,7 @@ void d3d_shadow_apply()
             for (int row = 0; row < 3; row++)
                 for (int col = 0; col < 4; col++) {
                     float wo = 0, wn = 0;
-                    // rows map object -> view: view.r = dot(row, p). world = Rinv * view, so the 3 rows of a bone
-                    // combine: world_row_c = sum_r Rinv[c][r] * row_r (+ Rinv[c][3] for the constant part)
+                    // bone rows map object -> view; world = Rinv * view
                     for (int rr = 0; rr < 3; rr++) {
                         wo += e.Rinv[row * 4 + rr] * o[rr * 4 + col];
                         wn += Rinv[row * 4 + rr] * n[rr * 4 + col];
@@ -942,9 +907,7 @@ void d3d_shadow_apply()
                 }
             same = worst <= 1e-3f;
         }
-        // Other meshes: placement (M) decides. Their "bone" slots are not compared - the constant block is global, so
-        // slots a static mesh's shader never reads still hold the last skinned character's bones (they changed every
-        // frame while the mesh did not). The light block / materials (c39..) do not move geometry either.
+        // other meshes: placement (M) decides; bone slots aren't compared (they hold the last skinned character's bones)
         for (int q = 0; q < 0 && same; q++) {
             float d = fabsf(e.consts[q] - src[q]) / (1 + fabsf(src[q]));
             worst = d > worst ? d : worst;
@@ -981,9 +944,7 @@ void d3d_shadow_apply()
     UINT extra = 0;
     for (auto it = g_cache.begin(); it != g_cache.end();) {
         Cached &e = it->second;
-        // Static scenery stays for the whole battle (cleared when 3D stops - a new arena): with a time limit the
-        // Stadium Dreas canopy over the field, off-screen in the close unit camera for a while, lost its shadows.
-        // Entries that never settled (moving / one-off draws) go after 30 frames unseen.
+        // static scenery stays for the whole battle (cleared when 3D stops); unsettled entries go after 30 frames unseen
         if (e.stable < 3 && g_d3d.frame - e.seen > 30u) {
             cached_release(e);
             it = g_cache.erase(it);
@@ -1026,7 +987,7 @@ void d3d_shadow_apply()
                  "unstable by texture:%s\n", st, (unsigned)g_cache.size(), off, off_st, hits, (unsigned)g_casts.size(),
                  top.c_str());
     }
-    // view-space frustum slice [near, distance] -> light-space box. View point at clip w: z from P row 3.
+    // view-space frustum slice [near, distance] -> light-space box; view point at clip w, z from P row 3
     float D[3] = {g_sun[0], g_sun[1], g_sun[2]};
     {
         float down = -(D[0] * g_up[0] + D[1] * g_up[1] + D[2] * g_up[2]);   // sin(elevation)
@@ -1039,10 +1000,8 @@ void d3d_shadow_apply()
                 D[k] = (hl > 1e-6f ? h[k] / hl * c : 0) - g_up[k] * smin;
         }
     }
-    // Stable shadow map (no swimming / jumping while the camera moves - Theatre Antiquitis): light axes from WORLD up
-    // (g_up, view space) so the map does not roll with the camera; the visible slice [1, distance] enclosed by a sphere
-    // so the map's size does not change as the camera turns; its centre snapped to whole map texels measured from the
-    // world origin (R), so the texel grid stays put in the world and edges do not crawl.
+    // Stable shadow map: light axes from world up (no roll), the visible slice enclosed by a sphere (constant size), its
+    // centre snapped to whole texels from the world origin (no crawling edges).
     float up[3] = {g_up[0], g_up[1], g_up[2]};
     if (fabsf(D[0] * up[0] + D[1] * up[1] + D[2] * up[2]) > 0.95f) up[0] = 1, up[1] = 0, up[2] = 0;
     float U[3] = {up[1] * D[2] - up[2] * D[1], up[2] * D[0] - up[0] * D[2], up[0] * D[1] - up[1] * D[0]};
@@ -1079,8 +1038,7 @@ void d3d_shadow_apply()
             q[k] = oq[k] + floorf((q[k] - oq[k]) / texel + 0.5f) * texel;
     }
     float lo[3] = {q[0] - rad, q[1] - rad, q[2] - rad - 150}, hi[3] = {q[0] + rad, q[1] + rad, q[2] + rad};
-    // (lo z - 150: casters between the sun and the visible area. No fade at the map border: the sphere holds the
-    // whole visible slice.)
+    // lo z - 150: casters between the sun and the visible area
     float dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
     float L[16] = {2 * U[0] / dx, 2 * U[1] / dx, 2 * U[2] / dx, -(hi[0] + lo[0]) / dx,
                    2 * W[0] / dy, 2 * W[1] / dy, 2 * W[2] / dy, -(hi[1] + lo[1]) / dy,
@@ -1136,9 +1094,8 @@ void d3d_shadow_apply()
             at += r.count;
         }
     ctx->Unmap(g_ib, 0);
-    // Constants: every caster's block written into one big buffer with a single Map, each draw binding its own
-    // window (D3D11.1 constant buffer offsets) - a Map + 3.4 KB per caster was most of the shadow pass's CPU cost
-    // on the world map (~3000 casters, 2026-10-10). Binds are only issued when they change.
+    // constants: every caster's block written into one buffer with a single Map; each draw binds its own window (D3D11.1
+    // constant buffer offsets), only when it changes
     static ID3D11DeviceContext1 *ctx1;
     static int offsets_ok = -1;
     if (offsets_ok < 0) {
@@ -1255,8 +1212,7 @@ void d3d_shadow_apply()
     memcpy(cc + 16, L, 64);
     cc[32] = D[0], cc[33] = D[1], cc[34] = D[2], cc[35] = g_strength;
     cc[36] = (float)g_d3d.scene_width, cc[37] = (float)g_d3d.scene_height, cc[38] = 1.0f / g_size, cc[39] = (float)g_show;
-    // receiver bias: 0.08 game units + 2 shadow texels (coarse texels on big views - the world map - striped flat
-    // ground otherwise) + 0.25 x slope
+    // receiver bias: 0.08 units + 2 shadow texels + 0.25 x slope
     cc[40] = (0.08f + 2.0f * (2.0f * rad / g_size)) / dz, cc[41] = 0.25f / dz;
     cc[42] = g_distance;
     if (SUCCEEDED(ctx->Map(g_cb_comp, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {

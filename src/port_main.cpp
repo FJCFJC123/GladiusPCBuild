@@ -1,4 +1,4 @@
-// Startup and diagnostics for the converted exe.
+// Startup, threads and crash diagnostics for the converted exe.
 #include "port.h"
 #include "memstats.h"
 #include "container.h"
@@ -13,8 +13,7 @@
 static FILE *g_log;
 const PortInfo *g_port_info;
 
-// port.log is this session; the previous session's log moves to logs\port_<its end time>.log (newest 20 kept),
-// so a crash log survives any number of relaunches.
+// port.log is this session; the previous one moves to logs\port_<end time>.log (newest 20 kept).
 static FILE *open_log()
 {
     char dir[MAX_PATH], path[MAX_PATH];
@@ -22,8 +21,7 @@ static FILE *open_log()
     char *slash = strrchr(dir, 0x5C);
     if (slash)
         *slash = 0;
-    // a second instance on this PC (netplay test, -gnpad=N with N > 0) logs to port_padN.log: both instances
-    // writing / rotating port.log lost one side's log
+    // a second instance on this PC (-gnpad=N, N > 0) logs to port_padN.log
     char base[32] = "port";
     if (const char *pad = strstr(GetCommandLineA(), "-gnpad="))
         if (atoi(pad + 7) > 0)
@@ -121,10 +119,9 @@ static void run_init_table(uint32_t begin, uint32_t end, const char *what)
     port_log("  %s: %d initializers run\n", what, n);
 }
 
-// Developer menus ([game] DevMenus=1). MenuListLoadMenu(list, file, id) loads a .mnu from gladius.bec.
-// Splash: the dev build loaded splash_startup (400 = the menu shown), splash_school (0x191 load school,
-// 0x192 reset school) and splash_consolevars (0x193); retail loads splash_pressa as 400 instead.
-// Battle: kero_shortoption (0x6B, pause), kero_optionoption (0x6C, debug options), kero_debugcamtrack (0x6D).
+// Developer menus ([game] DevMenus=1): the dev build's splash and battle debug menus (.mnu) still ship in gladius.bec.
+// Splash: splash_startup (400), splash_school (0x191 / 0x192), splash_consolevars (0x193).
+// Battle: kero_shortoption (0x6B), kero_optionoption (0x6C), kero_debugcamtrack (0x6D).
 typedef int(__cdecl *MenuListLoadMenuFn)(void *list, const char *file, int id);
 static const MenuListLoadMenuFn xbe_menu_load = (MenuListLoadMenuFn)0x5CD80;
 
@@ -140,12 +137,9 @@ static int __cdecl port_menu_load(void *list, const char *file, int id)
     return xbe_menu_load(list, file, id);
 }
 
-// The developer SplashState is dead code in retail: its methods exist (Init 0x161E50, Handle 0x1612E0, Draw
-// 0x161C50) but no vtable or constructor; the state factory (0x20630) builds a MainMenu for state 4. With
-// DevMenus, factory case 4 (jump table 0x20DFC[3]) builds a SplashState instead:
-//   0x84 bytes: GameState base (ctor 0x116E50), +0x14..+0x44 bundle/tile textures, +0x48 MenuControl (0x2C,
-//   ctor 0x5BB30), +0x74 List<Menu> (head/tail), +0x7C intro timer, +0x80 first-frame flag.
-//   vtable = EmptyState's (0x33BF88, 11 slots) with slot 4 Init, 7 Handle, 8 Draw replaced.
+// The developer SplashState's methods survive in retail (Init 0x161E50, Handle 0x1612E0, Draw 0x161C50) but nothing
+// builds it. With DevMenus the state factory's case 4 builds one: 0x84 bytes on the GameState base, with
+// EmptyState's vtable (0x33BF88) and slots 4 / 7 / 8 replaced.
 static DWORD g_splash_vtbl[11];
 
 static void *__fastcall splash_construct(BYTE *mem)
@@ -179,10 +173,8 @@ static __declspec(naked) void splash_factory_case()  // edi = state manager, as 
     }
 }
 
-// World map debug menu: WorldMenu (world_options.mnu, menu 200; items towns/reset/school/end/exit/regions,
-// handler 0x4DA00) is built by the world map state (+0x60) and updated/drawn whenever open, but retail has no
-// caller of WorldMenu::Open (0x4D9D0). The world map update asks WorldMenu::IsOpen (0x4D8D0) at 0xF99E8;
-// that call comes here: Y / Triangle on player 1 opens the menu first.
+// World map debug menu (world_options.mnu): retail never opens it. Player 1's Y opens it, through the world map's
+// WorldMenu::IsOpen call (0xF99E8).
 bool port_player1_y_pressed();
 
 static bool __fastcall port_worldmenu_isopen(BYTE *menu)
@@ -194,9 +186,7 @@ static bool __fastcall port_worldmenu_isopen(BYTE *menu)
     return ((IsOpenFn)0x4D8D0)(menu);
 }
 
-// RequestState(id) (0x1EF40, cdecl): pending game state -> [0x38E43C]. Retail boots from the intro movies
-// straight into MAINMENU (21) and never enters SPLASH (4), where the dev menu lives: with DevMenus the first
-// MAINMENU request becomes SPLASH; its "MainMenu" item then reaches the normal main menu.
+// RequestState (0x1EF40): with DevMenus the first MAINMENU (21) request becomes SPLASH (4), where the dev menu lives.
 static bool g_dev_splash_pending;
 static void __cdecl port_request_state(int id)
 {
@@ -208,17 +198,13 @@ static void __cdecl port_request_state(int id)
     *(int *)0x38E43C = id;
 }
 
-// [debug] WatchTls=1: hardware write watch on the game thread's CRT per-thread-data slot (static TLS block +0xC,
-// TLS index variable 0x418B8C); the watchdog applies it to every game thread once the address is known
+// [debug] WatchTls=1: hardware write watch on the game thread's CRT per-thread-data slot
 static volatile DWORD g_tls_watch_req;
 static DWORD g_tls_index0, g_tls_block0;
 
-// The game's static TLS block (CRT per-thread data at +0xC, 0x90 bytes in all) must really be that big. The
-// Windows loader sizes it from the exe's raw TLS template only (SizeOfZeroFill ignored); exes converted before
-// 2026-10-04 have an empty template, so each thread got a 0-byte block and the CRT wrote into heap neighbours.
-// Fixed exes (raw template >= 0x90) need nothing. For an old exe, every thread running game code gets a zeroed
-// full-size block of ours in its slot; the loader's own pointer is kept inside it and put back before the thread
-// exits (port_restore_game_tls), so ntdll only ever frees what it allocated (its TLS heap is not ours).
+// The game's static TLS block (CRT per-thread data, 0x90 bytes) must really be that big. Exes converted with an empty
+// TLS template got a 0-byte block, so for those every game thread gets a full-size block of ours; the loader's own
+// pointer is put back before the thread exits.
 static const DWORD TLS_NEED = 0x90, TLS_MAGIC = 0x534C5447;    // 'GTLS'
 static int tls_template_ok()                                     // 1 = exe template big enough
 {
@@ -260,8 +246,7 @@ void port_restore_game_tls()
     HeapFree(GetProcessHeap(), 0, b);
 }
 
-// Level editor: the same converted exe, installed a second time as gladius_editor.exe. Boots straight into the
-// world map (state 7, the dev splash "World Map" entry) instead of the menus.
+// Level editor: the same exe installed as gladius_editor.exe; boots straight into the world map.
 bool port_is_editor()
 {
     static int editor = -1;
@@ -274,8 +259,7 @@ bool port_is_editor()
     return editor != 0;
 }
 
-// Settings file name next to the exe. A second instance on the same PC (-gnpad=N, netplay tests) reads
-// gladiusport_padN.ini when that file exists, so two instances can run with different video / cpu settings.
+// Settings file next to the exe; a second instance (-gnpad=N) reads gladiusport_padN.ini when it exists.
 const char *port_ini_name()
 {
     static char name[32];
@@ -322,13 +306,11 @@ static DWORD WINAPI game_thread(LPVOID param)
     return r;
 }
 
-// Fatal exceptions: log fault, registers and a stack scan of return addresses inside the image.
+// Fatal exceptions: log fault, registers and the image return addresses on the stack.
 static DWORD g_watch_addr;                             // [debug] WatchWrite: hardware write breakpoint
 
-// The game was written for the Xbox's single CPU core: its threads were never truly simultaneous, and engine
-// structures shared between them (allocator lists, loader queues) have no locks. All game threads therefore run
-// on one dedicated core, scheduled by priority as on the Xbox; the port's own threads (D3D11 driver, audio
-// mixer, input, watchdog) use the remaining cores. [cpu] SingleCore=0 disables it.
+// The game was written for one CPU core and its shared engine structures have no locks, so all game threads run on
+// one dedicated core; the port's own threads use the rest. [cpu] SingleCore=0 disables it.
 static DWORD_PTR g_game_core_mask;
 
 static DWORD_PTR g_pin_mask_saved;                     // the single game core (also while unpinned)
@@ -346,7 +328,7 @@ void port_pin_game_thread(HANDLE thread)
         GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
         if (proc & (proc - 1)) {                        // >= 2 usable cores: work out the game core
             DWORD_PTR rest = proc & (proc - 1);         // prefer the second usable core (core 0 takes interrupts)
-            // two instances on one PC (netplay test, -gnpad=N): instance N takes the N-th core after that
+            // two instances on one PC (-gnpad=N): instance N takes the N-th core after that
             const char *pad = strstr(GetCommandLineA(), "-gnpad=");
             for (int skip = pad ? atoi(pad + 7) : 0; skip > 0 && (rest & (rest - 1)); skip--)
                 rest &= rest - 1;
@@ -369,8 +351,7 @@ void port_pin_game_thread(HANDLE thread)
         SetThreadAffinityMask(thread, g_game_core_mask);
 }
 
-// Options > Video "CPU Cores": Single = every game thread back on the game core, Multi = all of the process's cores
-// (experimental: the game's unlocked shared structures assume one core). Threads created later follow the choice.
+// Options > Video "CPU Cores": Single = game threads on the game core, Multi = all cores (experimental).
 void port_set_single_core(bool on)
 {
     if (!g_pin_init || !g_pin_mask_saved)
@@ -387,8 +368,7 @@ void port_set_single_core(bool on)
     port_log("cpu: game threads %s\n", on ? "pinned to the game core again" : "unpinned (all cores, experimental)");
 }
 
-// [debug] Profile: CPU time of every game thread (the main thread + the XAPI-created ones in g_game_threads), logged
-// every 10 s as "threads:" - which threads share the pinned game core, how busy it is, whether unpinning could help.
+// [debug] Profile: CPU time of every game thread, logged every 10 s as "threads:".
 static HANDLE g_main_game_thread;
 static const void *g_main_game_start;
 HANDLE port_main_game_thread() { return g_main_game_thread; }
@@ -439,8 +419,7 @@ void port_thread_stats()
                  line);
 }
 
-// Memory watches (pkgdiag.cpp): two more 4-byte write breakpoints in DR2/DR3, on EVERY thread of the
-// process (game threads and the port's own audio / D3D / input threads), set by port_memwatch_set.
+// Memory watches (pkgdiag.cpp): two more 4-byte write breakpoints (DR2 / DR3) on every thread of the process.
 static volatile uint32_t g_mw_addr[2];
 static volatile LONG g_mw_gen, g_mw_applied;
 
@@ -478,7 +457,7 @@ void port_apply_watch(HANDLE thread)
     SetThreadContext(thread, &c);
 }
 
-// called by the watchdog loop: push changed memory watches into every thread of the process
+// Watchdog: push changed memory watches into every thread.
 static void memwatch_apply_all()
 {
     LONG gen = g_mw_gen;
@@ -522,9 +501,8 @@ static const char *module_of(uint32_t a, char *out, size_t n)
     return out;
 }
 
-// Full-memory minidump: <exe dir>\crash\<time>_<why>.dmp (newest 4 kept), at most once per reason per session.
-// The WER dump only holds stacks and image data; the bad objects of the skinned-draw crash live in the heap.
-// Written by a helper thread (the faulting thread's own stack/context stays intact), bounded wait.
+// Full-memory minidump: <exe dir>\crash\<time>_<why>.dmp (newest 4 kept), once per reason per session, written by a
+// helper thread with a bounded wait.
 volatile DWORD g_port_probe_tid;                       // pkgdiag.cpp: thread inside a guarded probe read
 
 struct DumpJob {
@@ -615,7 +593,7 @@ static void write_dump(const char *why, EXCEPTION_POINTERS *ep)
 
 void port_write_dump(const char *why) { write_dump(why, nullptr); }
 
-// a fatal exception nobody handled: full dump, then the default handling (WER)
+// A fatal exception nobody handled: full dump, then default handling (WER).
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep)
 {
     write_dump("crash", ep);
@@ -740,8 +718,7 @@ static LONG CALLBACK crash_handler(EXCEPTION_POINTERS *ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-// abort() (an assert, a pure virtual call, the CRT giving up) raises SIGABRT and then fast-fails (0xC0000409):
-// no exception handler runs and no dump is written - log who called it and write the dump here
+// abort() fast-fails without running exception handlers: log the callers and write the dump here.
 static void log_callers(const char *what)
 {
     char mod[MAX_PATH + 32];
@@ -780,8 +757,8 @@ static void __cdecl on_purecall()
 GameThread g_game_threads[32];
 int g_game_thread_count;
 
-// Snapshot another thread: EIP, registers and image return addresses on its stack. Nothing that takes a lock
-// (logging, heap) runs while the thread is suspended - it may hold the log's FILE lock itself.
+// Snapshot another thread: EIP, registers and image return addresses on its stack. Nothing that takes a lock runs
+// while it is suspended.
 static void dump_thread(HANDLE t, const char *why)
 {
     if (SuspendThread(t) == (DWORD)-1) {
@@ -813,10 +790,8 @@ static void dump_thread(HANDLE t, const char *why)
     port_log("\n");
 }
 
-// [debug] Profile=1: sampling profiler for the game's main thread. ~1 kHz: suspend, read EIP + the first return
-// address into the game image, resume. Samples of each frame (Swap to Swap) are kept; frames slower than 25 ms add
-// theirs to the "slow" histogram. Every 10 s the top buckets are logged ("prof:"), leaf EIP in 64-byte buckets
-// (game image) or module+offset (DLLs), plus the first game-image caller (which game function drove it).
+// [debug] Profile=1: ~1 kHz sampling profiler for the main thread (EIP + first game caller). Frames slower than 25 ms
+// feed a "slow" histogram; the top buckets are logged every 10 s ("prof:").
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
@@ -951,8 +926,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     g_watch_addr = PORT_RELEASE ? 0 : strtoul(val, nullptr, 16);
     if (g_watch_addr)
         port_log("debug: hardware write watch on %08X\n", g_watch_addr);
-    // [game] UnlockVersus=1: the main menu (0xFD520) adds its "VersuS" item only when some save has progress > 1
-    // (field +0x1C); skip that condition so versus is always offered
+    // [game] UnlockVersus=1: always offer the main menu's "VersuS" item
     if (GetPrivateProfileIntA("game", "UnlockVersus", 0, ini)) {
         WORD *jcc = (WORD *)0xFD5E0;                    // je 0xFD62E (74 4C)
         if (*jcc == 0x4C74) {
@@ -962,9 +936,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
             port_log("game: UnlockVersus - unexpected bytes %04X at 0xFD5E0, not patched\n", *jcc);
         }
     }
-    // [game] UnlockArenas=1 (default): the versus arena list (0x1000F0) enables arena i only when bit i of the
-    // save's unlock mask [0x4180FC] is set (towns visited). Read all 15 as unlocked there - the save's mask itself
-    // is untouched. Must match on every machine of a netplay session (the host's pick is checked on each side).
+    // [game] UnlockArenas=1 (default): every versus arena reads as unlocked (the save's mask is untouched). Must match on
+    // every machine of a netplay session.
     if (GetPrivateProfileIntA("game", "UnlockArenas", 1, ini)) {
         BYTE *rd = (BYTE *)0x1001DC;                    // movzx ecx, word ptr [0x4180FC]
         if (!memcmp(rd, "\x0F\xB7\x0D\xFC\x80\x41\x00", 7)) {
@@ -977,13 +950,11 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     }
     // frame hook + deterministic-mode hooks (gn_hooks.cpp); [net] Netplay=1 (default) also loads gladiusnet.dll
     gn_install(GetPrivateProfileIntA("net", "Netplay", 1, ini) != 0);
-    // [game] DevMenus=1: the developer menus still ship in gladius.bec and their handlers are intact in the XBE
-    // (SplashState handler 0x1612E0, battle menu handler 0x7CEC0); only the loading was cut. Two
-    // MenuListLoadMenu (0x5CD80, cdecl list/name/id) call sites are redirected to port_menu_load.
+    // [game] DevMenus=1: load the developer menus (their handlers are intact; only the loading was cut) by redirecting two
+    // MenuListLoadMenu (0x5CD80) calls to port_menu_load.
     if (GetPrivateProfileIntA("game", "DevMenus", 1, ini) || port_is_editor()) {   // editor: its boot redirect
-        // battle: the pause menu's "Debug Menu" entry (opens kero_shortoption.mnu = menu 0x6B: restart, end,
-        // team0win, team1win, maptoggle, gotoworld, wave) is shown while console var KeroDebugMenu (0x37D024)
-        // is set; KeroberusState::InitState zeroes it at 0x7FD74 (mov [0x37D024], ebx)
+        // battle: show the pause menu's "Debug Menu" (kero_shortoption.mnu) by keeping console var KeroDebugMenu (0x37D024)
+        // set; KeroberusState::InitState zeroes it at 0x7FD74
         BYTE *kd = (BYTE *)0x7FD74;
         if (!memcmp(kd, "\x89\x1D\x24\xD0\x37\x00", 6)) {
             memset(kd, 0x90, 6);
@@ -1026,10 +997,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     }
     port_log("settings: %s\n", port_ini_name());
     port_log("%s\n", PORT_RELEASE ? "GPBUILD=release" : "GPBUILD=dev");   // builder\build_exe.bat checks this tag
-    // DEP: data memory is never executable. gladius.exe (converted XBE) has no NX_COMPAT flag, so a 32-bit
-    // process would run with DEP off - and netplay state sync lets a host write this process's game memory, where
-    // injected bytes could then run. Nothing here executes data (hooks patch the image's own code pages).
-    // [debug] NoDEP=1 leaves it off (diagnostics only; ignored in release builds).
+    // DEP: the converted exe has no NX_COMPAT flag, and netplay state syncs let a host write this process's game memory,
+    // so data must never be executable. [debug] NoDEP=1 leaves it off (dev builds only).
     if (PORT_RELEASE || !GetPrivateProfileIntA("debug", "NoDEP", 0, ini)) {
         typedef BOOL(WINAPI * DepFn)(DWORD);
         DepFn dep = (DepFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetProcessDEPPolicy");
@@ -1064,7 +1033,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         CloseHandle(pt);
         port_log("debug: main-thread sampling profiler on (prof: lines every 10 s)\n");
     }
-    // watchdog: while the game thread runs, dump where it and every game-created thread are every 6 s
+    // watchdog: while the game thread runs, dump where every game thread is every 6 s
     for (DWORD tick = 0; WaitForSingleObject(t, 50) == WAIT_TIMEOUT;) {
         port_thread_timer_tick();
         memwatch_apply_all();
@@ -1105,8 +1074,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     ExitProcess(code);
 }
 
-// Engine halt (0x1D5D10 is `jmp $`): the engine registers it as CRI's error callback and uses it for fatal
-// errors. Replaced so the reason is logged; the thread then parks like the original.
+// Engine halt (0x1D5D10, `jmp $`, also CRI's error callback): log the reason, then park the thread like the original.
 extern "C" __declspec(dllexport) void __cdecl port_engine_halt(DWORD a, DWORD b)
 {
     const char *msg = nullptr;
