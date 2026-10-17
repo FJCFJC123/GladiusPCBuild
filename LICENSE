@@ -25,8 +25,11 @@ SOFTWARE.
 Scope: this license covers the GladiusPort source code and documentation in
 this repository. It does not cover:
 
-  * netplay/gladiusnet.dll - distributed as a binary only, free to use and
-    redistribute unmodified with GladiusPort; all other rights reserved.
+  * netplay/gladiusnet.dll - proprietary, closed-source software under its own
+    restrictive license (netplay/gladiusnet_LICENSE.txt). It may be used only
+    with GladiusPort and redistributed only unmodified, as part of GladiusPort,
+    together with that license. Reverse engineering, modification and separate
+    use are not permitted. All other rights reserved.
   * Third-party components - each under its own license (THIRD_PARTY_NOTICES.md,
     LICENSES/).
   * Gladius itself - no game code or data is included; the game and its
