@@ -61,11 +61,12 @@ float4 ps(V i) : SV_Target
         }
     m1 /= 9, m2 /= 9;
     float3 sd = sqrt(max(m2 - m1 * m1, 0));
-    mn = max(mn, m1 - 1.25 * sd), mx = min(mx, m1 + 1.25 * sd);     // variance clip, tightened by the box
+    mn = max(mn, m1 - sd), mx = min(mx, m1 + sd);       // variance clip, tightened by the box
     if (info.z < 0.5) return c;
     // reprojection: this pixel's point (G-buffer view depth; |w|, lit draws store it negative) in last frame's clip
     float w = abs(gdepth.Load(int3(i.uv / info.xy, 0)));
-    float2 ndc = float2(i.uv.x * 2 - 1, 1 - i.uv.y * 2) - jit.xy;   // unjittered
+    // the pixel centre, not the jittered sample: history is looked up where this output pixel was last frame
+    float2 ndc = float2(i.uv.x * 2 - 1, 1 - i.uv.y * 2);
     float2 prev_uv = i.uv;
     if (w > 0 && w < 60000) {
         float4 clip = float4(ndc * w, P.z * -w + P.w, w);          // z from P row 2 with view z = -w
@@ -78,9 +79,11 @@ float4 ps(V i) : SV_Target
     }
     if (any(prev_uv < 0) || any(prev_uv > 1)) return c;
     float3 h = hist.SampleLevel(lin, prev_uv, 0).rgb;
-    float3 hq = clamp(ycocg(h * wt(h)), mn, mx);
+    float3 hy = ycocg(h * wt(h)), hq = clamp(hy, mn, mx);
     float3 cq = ycocg(c.rgb * wt(c.rgb));
-    float3 r = rgb(lerp(hq, cq, 0.1));
+    // anti-ghosting: history the clamp had to pull far (something moved here) gives way to the current frame faster
+    float k = lerp(0.1, 0.5, saturate(length(hy - hq) * 8));
+    float3 r = rgb(lerp(hq, cq, k));
     r = r / max(1 - dot(r, float3(0.2126, 0.7152, 0.0722)), 1e-3);   // undo the tone-mapped weight
     return float4(max(r, 0), c.a);
 }
