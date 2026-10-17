@@ -37,7 +37,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 - **HD texture packs**: load a folder of upscaled textures; F4 switches between original and HD live.
 - **Controllers**: Xbox, PlayStation, Switch Pro and more through SDL2, plus keyboard support.
 - **Quality of life**: in-game Video options, 27 save slots, Quit Game in the main menu, all versus arenas.
-- **Online versus** over the internet or LAN: encrypted, relay-hosted, with match codes.
+- **Online versus** over the internet or LAN: encrypted, relay-hosted, with match codes. It's provided by the
+  closed-source `gladiusnet.dll`, under its own [license](#license).
 - **Level editor** (optional): reshape levels, merge in GLB models, and edit collision, the battle grid and props, live
   inside the running game. See [below](#level-editor).
 
@@ -51,7 +52,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 3. Start `gladius.exe` in the install folder.
 
 The game files, saves, settings and logs all live in that one folder. For online play, choose **VersuS** on the
-main menu, then **Host** or **Join**. Both players need the same GladiusPort version.
+main menu, then **Host** or **Join**. Both players need the same GladiusPort version. Online play comes from
+`gladiusnet.dll`, which the builder installs together with its license, `gladiusnet_LICENSE.txt`.
 
 ---
 
@@ -106,15 +108,18 @@ src\build.bat release       :: gladiusport.dll  -> build\release\
 builder\build_exe.bat       :: GladiusPortBuilder.exe -> builder\dist\
 ```
 
-`src\build.bat` without `release` builds a development DLL with extra debugging switches. `netplay/gladiusnet.dll`
-(online versus) ships prebuilt; its source is not part of this repository. Without it, the game runs offline.
+`src\build.bat` without `release` builds a development DLL with extra debugging switches.
+
+`netplay/gladiusnet.dll` (online versus) ships prebuilt and closed source; `build_exe.bat` packs it into the builder
+with `netplay/gladiusnet_LICENSE.txt`. It isn't covered by the MIT License: it may only be used with GladiusPort and
+redistributed unmodified, together with that license (see [License](#license)). Without it, the game runs offline.
 
 | Path | Contents |
 |---|---|
 | `src/` | `gladiusport.dll`: kernel/XAPI replacements, Direct3D 11 renderer, audio, input, game additions |
 | `tools/` | XBE → PE converter, replacement tables, model and level tools |
 | `builder/` | GladiusPort Builder (Python / tkinter) |
-| `netplay/` | `gladiusnet.dll`, prebuilt |
+| `netplay/` | `gladiusnet.dll`, prebuilt and closed source, and its license `gladiusnet_LICENSE.txt` |
 | `third_party/` | dlmalloc, SDL2 |
 
 ---
@@ -145,7 +150,10 @@ GladiusPort stands on tools and research by others. Thank you to all of them.
 
 GladiusPort's source code is released under the [MIT License](LICENSE). The license covers this repository's
 code only:
-- `netplay/gladiusnet.dll` is binary-only: free to use and redistribute unmodified with GladiusPort.
+- `netplay/gladiusnet.dll` is proprietary and closed source, under its own restrictive license
+  ([`netplay/gladiusnet_LICENSE.txt`](netplay/gladiusnet_LICENSE.txt)). It may be used only with GladiusPort
+  and redistributed only unmodified as part of GladiusPort. Reverse engineering it, modifying it or using it
+  separately is not allowed.
 - Third-party components keep their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
   [`LICENSES/`](LICENSES/).
 - *Gladius* itself is not covered by any license here.

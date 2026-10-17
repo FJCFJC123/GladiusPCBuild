@@ -18,6 +18,7 @@ set NETDLL=..\netplay\gladiusnet.dll
 if /i "%~1"=="dev" if exist ..\build\gladiusnet.dll set NETDLL=..\build\gladiusnet.dll
 if not exist %NETDLL% (echo missing %NETDLL% - online versus would be unavailable & exit /b 1)
 copy /y %NETDLL% payload\ >nul || exit /b 1
+copy /y ..\netplay\gladiusnet_LICENSE.txt payload\ >nul || exit /b 1
 copy /y ..\build\SDL2.dll payload\ >nul || exit /b 1
 xcopy /y /q /i ..\LICENSES payload\LICENSES >nul || exit /b 1
 copy /y ..\THIRD_PARTY_NOTICES.md payload\ >nul || exit /b 1

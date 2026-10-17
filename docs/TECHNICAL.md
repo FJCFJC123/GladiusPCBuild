@@ -275,7 +275,8 @@ These are small hooks into the game's own screens and systems.
 - **Developer menus** from the original game data, re-enabled (optional).
 - **Online versus** in `netplay/gladiusnet.dll`. It runs on a deterministic mode in `gladiusport.dll`: fixed
   frame time, fixed AI iterations and finished reads before each frame. Every machine runs the same frames from
-  the same inputs.
+  the same inputs. `gladiusnet.dll` itself is closed source under its own license
+  ([`gladiusnet_LICENSE.txt`](../netplay/gladiusnet_LICENSE.txt)).
 - **Level editor** (optional, `gladius_editor.exe`): live prop, mesh, collision and battle-grid editing. See
   [EDITOR.md](EDITOR.md).
 

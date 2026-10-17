@@ -166,9 +166,12 @@ class Builder:
         # online versus: the prebuilt gladiusnet.dll; without it the game runs offline
         try:
             shutil.copyfile(payload_file("gladiusnet.dll"), self.out / "gladiusnet.dll")
+            # the dll may only be redistributed together with its license
+            shutil.copyfile(payload_file("gladiusnet_LICENSE.txt"), self.out / "gladiusnet_LICENSE.txt")
             self.log("Installed gladiusnet.dll (online versus)")
         except FileNotFoundError:
             (self.out / "gladiusnet.dll").unlink(missing_ok=True)
+            (self.out / "gladiusnet_LICENSE.txt").unlink(missing_ok=True)
             self.log("gladiusnet.dll not in this builder - online versus unavailable")
         # GladiusPort + third-party license texts travel with every install (THIRD_PARTY_NOTICES.md)
         lic = bundle_dir() / "LICENSES"

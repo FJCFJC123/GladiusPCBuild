@@ -1,0 +1,43 @@
+gladiusnet.dll License
+
+Copyright (c) 2026 FJCFJC123. All rights reserved.
+
+gladiusnet.dll (GladiusPort online versus) is proprietary, closed-source software. It is NOT covered by the
+MIT License that applies to the rest of this repository.
+
+You may:
+
+  - use it only as loaded by an official GladiusPort build (gladiusport.dll and the gladius.exe or
+    gladius_editor.exe produced by the GladiusPort Builder), to play online with GladiusPort; and
+  - redistribute it only unmodified, only as part of a complete GladiusPort distribution, and only together
+    with this notice.
+
+You may not:
+
+  - load, call or use it, in whole or in part, from any other program, or use it separately from GladiusPort;
+  - modify, patch, hook, or create derivative works of it, or wrap or replace it with a lookalike;
+  - reverse engineer, decompile or disassemble it, or extract keys, secrets, protocols or algorithms from it,
+    except to the extent applicable law expressly permits this despite this restriction;
+  - circumvent, disable or interfere with its security features, including relay admission, build
+    authentication, encryption, match codes, version checks and desync detection;
+  - build, run or distribute other software that connects to the GladiusPort relay or to GladiusPort players
+    by impersonating or reimplementing it or its protocols;
+  - sell, rent, lease or sublicense it, or charge for it, including as part of a paid bundle.
+
+Online service. Access to the GladiusPort relay is a free service that may be changed, limited, suspended or
+ended at any time, for anyone, without notice, including by revoking builds.
+
+Termination. Your rights end automatically if you break any of these terms. You must then stop using
+gladiusnet.dll and delete every copy you have.
+
+The software is licensed, not sold; all rights not expressly granted are reserved. GladiusPort runs offline
+without this file.
+
+NO WARRANTY. THE SOFTWARE AND THE ONLINE SERVICE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+AND NONINFRINGEMENT, OR ANY GUARANTEE OF AVAILABILITY. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE, THE ONLINE SERVICE, OR THE USE OF OR OTHER DEALINGS IN THEM.
+
+If any term is held unenforceable, it is limited to the minimum extent necessary and the rest remains in
+effect.
