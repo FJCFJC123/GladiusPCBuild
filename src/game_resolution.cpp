@@ -24,7 +24,8 @@ static const struct { DWORD addr; WORD retail; char what; const char *note; } IN
     {0x385838, 640, 'W', "mode table"}, {0x38583C, 480, 'H', "mode table"},
     {0x385844, 640, 'W', "mode table"}, {0x385848, 480, 'H', "mode table"},
 };
-// D3D_SetViewportConstants(0, 0, 640.0f, 480.0f, ...) float pushes: the 2D mapping. Height is scaled by 728/720.
+// D3D_SetViewportConstants(0, 0, 640.0f, 480.0f, ...) float pushes (end-of-frame full-screen viewport for the 2D layer):
+// exactly the screen size, like gfx_SetViewport's own full-screen viewport - any other height shifts the 2D layer.
 static const DWORD VP_HEIGHT_F = 0x1CD407, VP_WIDTH_F = 0x1CD40C;
 
 // "auto" (desktop size) or "WxH" -> w, h.
@@ -147,10 +148,53 @@ static void install_camera_apply()
     *(int32_t *)(p + 1) = (int32_t)((DWORD)camera_apply - (0x1AC974 + 5));
 }
 
+// [diagnostic] gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels): logs the sub-screen viewports (the 3D
+// character previews of the school / shop screens), once per distinct rectangle.
+static void __cdecl log_viewport(const int *a)
+{
+    static int seen[16][4], n;
+    int w = *(const int *)0x37FD38, h = *(const int *)0x37FD3C;
+    if (n >= 16 || (a[0] == 0 && a[1] == 0 && a[2] == w && a[3] == h))
+        return;
+    for (int i = 0; i < n; i++)
+        if (!memcmp(seen[i], a, sizeof seen[i]))
+            return;
+    memcpy(seen[n++], a, sizeof seen[0]);
+    port_log("video: viewport %d,%d %dx%d on a %dx%d screen\n", a[0], a[1], a[2], a[3], w, h);
+}
+
+static __declspec(naked) void set_viewport_hook()
+{
+    __asm {
+        pushad
+        lea eax, [esp + 36]                             // the caller's arguments (above pushad + return address)
+        push eax
+        call log_viewport
+        add esp, 4
+        popad
+        mov eax, dword ptr ds:[0x37FFF4]                // displaced first instruction
+        push 0x1BCA55
+        ret
+    }
+}
+
+static void install_viewport_log()
+{
+    static const BYTE expect[5] = {0xA1, 0xF4, 0xFF, 0x37, 0x00};   // mov eax, [0x37FFF4]
+    BYTE *p = (BYTE *)0x1BCA50;
+    if (memcmp(p, expect, 5)) {
+        port_log("video: gfx_SetViewport at 1BCA50 unexpected - viewport log off\n");
+        return;
+    }
+    p[0] = 0xE9;
+    *(int32_t *)(p + 1) = (int32_t)((DWORD)set_viewport_hook - (0x1BCA50 + 5));
+}
+
 // Apply [video] Resolution / UiMode / UiAspect and install the 2D, particle and movie hooks.
 void port_game_resolution(const char *ini)
 {
     install_camera_apply();                             // also at 640x480: a netplay host may run another size
+    install_viewport_log();
     char val[32];
     GetPrivateProfileStringA("video", "Resolution", "640x480", val, sizeof val, ini);
     UINT w, h;
@@ -186,7 +230,7 @@ void port_game_resolution(const char *ini)
     for (const auto &s : INT_SITES)
         *(WORD *)s.addr = (WORD)(s.what == 'W' ? w : h);
     *(float *)VP_WIDTH_F = (float)w;
-    *(float *)VP_HEIGHT_F = (float)h * (728.0f / 720.0f);
+    *(float *)VP_HEIGHT_F = (float)h;
     g_game_res_w = w;
     g_game_res_h = h;
     bool fx = redirect_call(0x851DE, 0x1AC960, (void *)s2d_activate, "2D menu particles (FX_Render2d)");
