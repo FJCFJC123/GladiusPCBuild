@@ -1,6 +1,6 @@
 // Game resolution ([video] Resolution = 640x480 | auto | WxH). The engine hard-codes 640x480; every site that holds
 // it is rewritten at startup. 3D widens horizontally (Hor+); 2D maps -1..1 onto the whole frame.
-#include "port.h"
+#include "d3d.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -51,13 +51,31 @@ typedef void(__fastcall *CameraActivateFn)(void *cam, void *edx, int force);
 typedef void(__cdecl *ProjectionFn)(float l, float r, float b, float t, float n, float f, void *out);
 static void *const S2D_CAMERA = (void *)0x3D3050;
 // Every Camera_BuildViewFrustum call goes through here; s2dCamera's projection is then rebuilt at 4:3.
+// Preview cameras (+0x286 own viewport, +0x287 width-fixed: the school / shop character views) take their vertical
+// extent from the viewport's height / width - a tall UI box at 640x480, a much squarer one once the UI is stretched
+// over a wide screen, which zoomed the character in. Their vertical extent is set back to what the 640x480 box gives,
+// and the horizontal one widened to the box's real shape (no distortion).
 static const DWORD BUILD_FRUSTUM_CALLS[] = {0x1AB538, 0x1ABD9E, 0x1AC73B, 0x1AC8DB};
 static void __fastcall build_frustum(void *cam, void *edx)
 {
     ((CameraFn)0x1AB030)(cam, edx);                     // Camera_BuildViewFrustum
+    BYTE *c = (BYTE *)cam;
+    if (cam != S2D_CAMERA && c[0x286] && c[0x287]) {
+        const int *rc = (const int *)(c + 0x25C);       // x, y, w, h in screen pixels
+        if (rc[2] <= 0 || rc[3] <= 0)
+            return;
+        float n = *(float *)(c + 0x274), far_ = *(float *)(c + 0x278);
+        float t = tanf(*(float *)(c + 0xA0) * 0.5f) * n;
+        float r = (rc[3] * 480.0f / g_game_res_h) / (rc[2] * 640.0f / g_game_res_w);   // the box's H/W at 640x480
+        float hh = r >= 0.75f ? r * t : 0.75f * t, hw = hh * rc[2] / rc[3];
+        *(float *)(c + 0x26C) = (float)rc[3] / rc[2];
+        *(float *)(c + 0x27C) = hw;
+        *(float *)(c + 0x280) = hh;
+        ((ProjectionFn)0x1BC5A0)(-hw, hw, -hh, hh, n, far_, c + 0xF0);
+        return;
+    }
     if (cam != S2D_CAMERA)
         return;
-    BYTE *c = (BYTE *)cam;
     float n = *(float *)(c + 0x274), far_ = *(float *)(c + 0x278);
     float hw = tanf(*(float *)(c + 0xA0) * 0.5f) * n, hh = hw * 0.75f;
     *(float *)(c + 0x26C) = 0.75f;                      // H/W
@@ -148,13 +166,21 @@ static void install_camera_apply()
     *(int32_t *)(p + 1) = (int32_t)((DWORD)camera_apply - (0x1AC974 + 5));
 }
 
-// [diagnostic] gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels): logs the sub-screen viewports (the 3D
-// character previews of the school / shop screens), once per distinct rectangle.
-static void __cdecl log_viewport(const int *a)
+// gfx_SetViewport (0x1BCA50, cdecl x, y, w, h in screen pixels, y from the bottom): a sub-screen viewport (the 3D
+// character previews of the school / shop screens) is noted for TAA - outside the box, and its empty background,
+// the screen is static 2D, not sky - and each distinct one is logged once.
+float g_sub_viewport[4];                                // left, top, right, bottom as 0..1 of the screen
+DWORD g_sub_viewport_frame = 0xFFFFFFFF;                // d3d frame it was set in
+static void __cdecl note_viewport(const int *a)
 {
     static int seen[16][4], n;
     int w = *(const int *)0x37FD38, h = *(const int *)0x37FD3C;
-    if (n >= 16 || (a[0] == 0 && a[1] == 0 && a[2] == w && a[3] == h))
+    if (w <= 0 || h <= 0 || (a[0] == 0 && a[1] == 0 && a[2] == w && a[3] == h))
+        return;
+    g_sub_viewport[0] = (float)a[0] / w, g_sub_viewport[2] = (float)(a[0] + a[2]) / w;
+    g_sub_viewport[1] = (float)(h - a[1] - a[3]) / h, g_sub_viewport[3] = (float)(h - a[1]) / h;
+    g_sub_viewport_frame = g_d3d.frame;
+    if (n >= 16)
         return;
     for (int i = 0; i < n; i++)
         if (!memcmp(seen[i], a, sizeof seen[i]))
@@ -169,7 +195,7 @@ static __declspec(naked) void set_viewport_hook()
         pushad
         lea eax, [esp + 36]                             // the caller's arguments (above pushad + return address)
         push eax
-        call log_viewport
+        call note_viewport
         add esp, 4
         popad
         mov eax, dword ptr ds:[0x37FFF4]                // displaced first instruction
