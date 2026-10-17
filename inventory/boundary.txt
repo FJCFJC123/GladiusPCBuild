@@ -1,0 +1,325 @@
+00272EF0 CRT+XAPI!sub_272EF0                                             1  {'engine-save': 1}  2717C2
+00272F04 CRT+XAPI!sub_272F04                                             9  {'game': 4, 'engine': 5}  33D50 486CB 49CBF 49FCC 18598C 18BCBF 1ED612 1ED843 1F9BE2
+00272F28 CRT+XAPI!sub_272F28                                            12  {'game': 1, 'engine': 10, 'CRI': 1}  5379B 1C543B 1C54D2 1C63C0 1CD056 1E445F 1E77D8 1F3FD1 1F9C6B 1FA390 1FA3EB 222384
+0027355A CRT+XAPI!sub_27355A                                            49  {'game': 31, 'engine': 13, 'CRI': 2, 'engine-save': 2, 'eh-funclets': 1}  13AC0 1A400 1E4B0 1EC61 1F570 24201 29050 33C31 3C0D0 3C0F0 3C110 3CB40…
+0027363F CRT+XAPI!sub_27363F                                           374  {'game': 131, 'engine': 27, 'eh-funclets': 216}  14BF4 1518B 16DB4 171FB 18A24 1928B 1CEF4 1E120 1E186 1E23D 1E2FD 1E42B…
+00273790 CRT+XAPI!sub_273790                                            79  {'game': 36, 'engine': 14, 'CRI': 28, 'engine-save': 1}  1815A 1819E 19741 31253 3DE46 3DEA3 48A76 4983C 5774C 6A2A6 72475 724D7…
+002738E4 CRT+XAPI!sub_2738E4                                           418  {'game': 172, 'engine': 209, 'CRI': 2, 'engine-save': 35}  182E2 191D1 197CB 24635 24651 2466D 24D12 2A421 2A58C 2F93F 3053E 313BA…
+00273900 CRT+XAPI!sub_273900                                            63  {'game': 42, 'engine': 19, 'CRI': 2}  1800A 18F7A 2F53A 3026A 310FA 3573A 3EE5A 417EA 49B3A 4B4CA 54CEA 551DA…
+00273944 CRT+XAPI!sub_273944                                           356  {'game': 125, 'engine': 97, 'CRI': 134}  23350 2EBEE 2EC1A 2FF1D 2FFA5 2FFCE 300E3 3429C 444DF 444F9 4C5E4 4C5FA…
+00273A11 CRT+XAPI!sub_273A11                                            57  {'game': 18, 'engine': 7, 'CRI': 32}  23E20 311D6 3662B 376FA 378E6 37A85 37C46 380E3 3A38F 3A641 3B6C6 3BC97…
+00273A8F CRT+XAPI!sub_273A8F                                            11  {'game': 6, 'engine': 5}  23E0C 3128B 312CC 3130A 31345 D9955 18F8A0 18F8B7 18F8C7 1ACE00 1ACFE8
+00273AEB CRT+XAPI!sub_273AEB                                           748  {'game': 120, 'engine': 610, 'CRI': 13, 'engine-save': 5}  24CB8 24CE5 2A50D 35775 42B9B 49F8A 4F2A1 50B31 51106 53ECC 53F52 5CDC2…
+00273B74 CRT+XAPI!sub_273B74                                            39  {'game': 13, 'engine': 14, 'CRI': 7, 'engine-save': 2, 'eh-funclets': 3}  3AAD1 47FFB 9B9A0 C2571 C258D FFF66 125481 12E28F 131290 1330BD 13D126 13E596…
+00273C46 CRT+XAPI!sub_273C46                                            89  {'game': 15, 'engine': 23, 'CRI': 16, 'engine-save': 2, 'eh-funclets': 33}  37653 4814D 6D3AD 9C7C4 C29CB C29E2 100E05 11BC1D 11BCBC 128FFC 12E369 1314BF…
+00273CAE CRT+XAPI!sub_273CAE                                             2  {'game': 2}  309C5 309D0
+00273CDF CRT+XAPI!sub_273CDF                                            10  {'game': 4, 'engine': 3, 'CRI': 3}  444DA 444F1 4C5DF 4C5F2 1CC79A 1CC7BA 1CE80F 24DA96 25F58E 25F6AE
+00273DB2 CRT+XAPI!sub_273DB2                                            81  {'game': 77, 'engine': 3, 'CRI': 1}  46B48 46B71 46B89 46BC0 46BEF 46C24 46C53 46C82 46CB1 46CE0 46D0F 46D47…
+00273E5C CRT+XAPI!sub_273E5C                                             9  {'game': 3, 'engine': 2, 'CRI': 4}  47EC0 48AF4 4995E 1EFDC3 1EFF63 222662 2227AD 24192B 24196B
+00273F09 CRT+XAPI!sub_273F09                                            12  {'game': 3, 'engine': 4, 'CRI': 5}  47ABD 4893C 49622 1EFD84 1EFD9C 1EFE63 1EFE7B 222655 22278E 24186B 24199B 241A4B
+00273F20 CRT+XAPI!sub_273F20                                            99  {'game': 11, 'engine': 1, 'CRI': 87}  5E4A7 62805 7726E B2F74 B795D 152998 1529AD 1529C2 1529D7 152A41 152A56 189376…
+00273FB0 CRT+XAPI!sub_273FB0                                             7  {'game': 1, 'engine': 3, 'CRI': 3}  619CD 1796B0 1FA631 1FA640 2225E5 222FF9 240D09
+00273FEA CRT+XAPI!sub_273FEA                                            35  {'game': 31, 'engine': 4}  68D78 68DBA 68DD8 68E3D 68E5C 68EB9 68ED7 8C1D7 F1648 F4D3C FE76D 12A593…
+00274008 CRT+XAPI!sub_274008                                            12  {'game': 3, 'engine': 6, 'CRI': 2, 'eh-funclets': 1}  6C268 6C4C2 C31FC 1EF920 1EF972 1EFA3F 1EFB30 1EFC52 209ACE 223E3F 22AC3C 29D83C
+00274219 CRT+XAPI!sub_274219                                            29  {'game': 9, 'engine': 16, 'CRI': 4}  6F532 6F6A2 70252 70472 718D7 71A22 71B92 71DB2 71F32 18A331 1BBFE8 1BE060…
+002742A0 CRT+XAPI!sub_2742A0                                             8  {'game': 3, 'engine': 3, 'CRI': 2}  A7994 A7A2F A7D55 180064 18F61C 1D1244 253F18 253F8D
+002742DA CRT+XAPI!sub_2742DA                                             6  {'game': 5, 'engine': 1}  D2207 D7FB3 D7FDC D8005 D802E 18C0C0
+00274545 CRT+XAPI!sub_274545                                          1016  {'game': 909, 'engine': 106, 'engine-save': 1}  1409A 19769 2277E 2280E 2289E 22937 2295F 229F3 23737 26854 26905 26953…
+002745DF CRT+XAPI!sub_2745DF                                             9  {'game': 7, 'engine': 2}  5600C 6278D 684DE B2A94 BC22A BC258 E602C 1CF5CE 1E70F4
+00274640 CRT+XAPI!sub_274640                                            16  {'CRI': 16}  2147A8 214E49 214E5D 214E90 2499E1 249A11 249C26 24A184 24A1AE 24A270 24A371 24A416…
+002749C0 CRT+XAPI!sub_2749C0                                             2  {'engine-save': 2}  2704CA 2704E0
+00274AAB CRT+XAPI!sub_274AAB                                             1  {'engine-save': 1}  270A3A
+00274AD0 CRT+XAPI!sub_274AD0                                            27  {'engine': 1, 'CRI': 26}  18E9D9 2129EB 2147B1 214E6A 214E9D 21B1A0 21B4E7 2289FA 228A68 22BF9B 22C0FB 22C1FD…
+00274C34 CRT+XAPI!sub_274C34                                             3  {'engine': 2, 'CRI': 1}  1A00D4 1A0D99 2176FB
+00275204 CRT+XAPI!sub_275204                                             5  {'engine': 5}  1768B6 176999 1770CF 177E80 1EF795
+00275216 CRT+XAPI!sub_275216                                             6  {'engine': 5, 'CRI': 1}  1762A9 176AE0 176B2F 177BE1 1EF7A5 2570E5
+0027526E CRT+XAPI!sub_27526E                                             1  {'engine': 1}  176303
+00275370 CRT+XAPI!sub_275370                                            15  {'engine': 11, 'CRI': 4}  17BB28 17DA85 17DB45 181119 1890D3 19A004 1DF564 1DF5AE 1DF679 1DF6D1 1E7776 23F3CD…
+0027542E CRT+XAPI!sub_27542E                                             2  {'engine': 2}  17FFC9 17FFD6
+002754AE CRT+XAPI!sub_2754AE                                             4  {'engine': 4}  17FFB8 180075 1813A0 1CF578
+002756A0 CRT+XAPI!sub_2756A0                                            30  {'engine': 10, 'CRI': 20}  18912C 1891C7 189333 1D9F1D 1D9F31 1DAAE6 1E7258 1F91E3 1F9262 1F9311 226CE5 226D88…
+002756D9 CRT+XAPI!sub_2756D9                                             1  {'engine': 1}  18F35F
+0027573F CRT+XAPI!sub_27573F                                             2  {'engine': 1, 'engine-save': 1}  1C86A5 270BF2
+002757A5 CRT+XAPI!sub_2757A5                                             2  {'engine': 2}  1CCE64 1FC51D
+002759A0 CRT+XAPI!sub_2759A0                                             2  {'engine': 2}  1CE980 1CE98F
+002759E8 CRT+XAPI!sub_2759E8                                             4  {'engine': 2, 'CRI': 1, 'eh-funclets': 1}  1E700E 1E7AEE 223820 29A214
+002759F5 CRT+XAPI!sub_2759F5                                             4  {'engine': 2, 'CRI': 2}  1E70BD 1E70CD 223015 240D34
+00275A28 CRT+XAPI!sub_275A28                                             2  {'engine': 2}  1EF884 1EFA48
+00275B00 CRT+XAPI!sub_275B00                                             5  {'engine': 5}  20B3BB 20B4F0 20B540 20D6A5 20D6C2
+00275B30 CRT+XAPI!sub_275B30                                             3  {'engine': 2, 'CRI': 1}  20B39B 20B4CF 21AB6E
+00275BDF CRT+XAPI!sub_275BDF                                             1  {'CRI': 1}  21A1FA
+00275D67 CRT+XAPI!sub_275D67                                            11  {'CRI': 11}  21F509 21F56D 21F5CE 21F6C9 21F72D 21F78E 21F889 21F8ED 21F94E 21FD29 220179
+00275D90 CRT+XAPI!sub_275D90                                             5  {'CRI': 5}  226A13 226AF3 22C8D3 22C9A3 241712
+00276085 CRT+XAPI!sub_276085                                             2  {'CRI': 2}  229DCE 229DF7
+0027612B CRT+XAPI!sub_27612B                                             1  {'CRI': 1}  2418B5
+0027626C CRT+XAPI!sub_27626C                                             2  {'CRI': 2}  2418EB 2419DB
+0027641A CRT+XAPI!sub_27641A                                             1  {'CRI': 1}  24190C
+00276572 CRT+XAPI!sub_276572                                             1  {'CRI': 1}  241A0B
+002765BE CRT+XAPI!sub_2765BE                                             1  {'CRI': 1}  2570CA
+002840A3 CRT+XAPI!sub_2840A3                                            10  {'engine': 10}  18E8F0 18E920 18E96D 18E9A9 18EA3F 18EC3E 18ED87 18EDDE 18EE6B 18EEF4
+00284664 CRT+XAPI!sub_284664                                            11  {'engine': 1, 'CRI': 10}  18E949 21296F 21B202 21B87F 2289E4 228A52 22BF85 22C0E5 22C1E7 244B08 249928
+00284678 CRT+XAPI!sub_284678                                             2  {'engine': 2}  1D6355 1D6403
+002846A6 CRT+XAPI!sub_2846A6                                             3  {'engine': 3}  1D6149 1D61A3 1D63B0
+00284810 CRT+XAPI!sub_284810                                             1  {'CRI': 1}  21B23E
+00284930 CRT+XAPI!sub_284930                                             1  {'CRI': 1}  21B636
+00284959 CRT+XAPI!sub_284959                                             1  {'CRI': 1}  21B62B
+002849A2 CRT+XAPI!sub_2849A2                                             1  {'CRI': 1}  21B626
+002849AA CRT+XAPI!sub_2849AA                                             1  {'CRI': 1}  21BC78
+00284A5D CRT+XAPI!sub_284A5D                                             1  {'engine-save': 1}  270EF6
+00284A70 CRT+XAPI!sub_284A70                                            16  {'CRI': 16}  228BA4 228D4D 22961D 2296AB 2298F8 243D6B 2440C8 24413C 24418F 2442C5 2442EF 244359…
+00284EA3 CRT+XAPI!sub_284EA3                                             1  {'CRI': 1}  229602
+00284F9F CRT+XAPI!sub_284F9F                                             3  {'CRI': 2, 'engine-save': 1}  229696 2572F2 272949
+002850AC CRT+XAPI!sub_2850AC                                             1  {'CRI': 1}  2573C9
+002850FD CRT+XAPI!sub_2850FD                                             1  {'CRI': 1}  241721
+00285645 CRT+XAPI!sub_285645                                             1  {'engine-save': 1}  272E84
+002858A8 CRT+XAPI!sub_2858A8                                             1  {'engine-save': 1}  272ECC
+00285978 CRT+XAPI!sub_285978                                             3  {'engine-save': 3}  271D51 271DEC 271FAE
+00285A82 CRT+XAPI!sub_285A82                                             2  {'engine-save': 2}  271DB9 271E2B
+00285AC9 CRT+XAPI!sub_285AC9                                             4  {'engine-save': 4}  271D63 271E35 271E86 271EBC
+002861B8 CRT+XAPI!sub_2861B8                                             2  {'game': 1, 'engine': 1}  2251F 17EBCF
+002AE040 D3D!sub_2AE040                                                  2  {'engine-save': 2}  27262F 272CAA
+002AE8D0 D3D!sub_2AE8D0                                                  1  {'engine': 1}  1EE1A5
+002B01F0 D3D!sub_2B01F0                                                  1  {'CRI': 1}  21924A
+002B1050 D3D!sub_2B1050                                                  2  {'engine-save': 2}  2725E1 272CB7
+002B0280 D3D8!D3DDevice_BeginPushBuffer                                  1  {'CRI': 1}  219275
+002ABE10 D3D8!D3DDevice_BeginPush_4                                      7  {'engine': 7}  1C2155 1C23C2 1C260C 1C27DF 1C292C 1C2B1F 1C2C8C
+002AC320 D3D8!D3DDevice_BeginStateBig                                    3  {'engine': 3}  1EE0EA 1EE309 1EF650
+002A8900 D3D8!D3DDevice_BlockUntilVerticalBlank                          7  {'engine': 4, 'CRI': 3}  1D5D20 1D6517 1D65B5 1D6D38 2115B0 211A20 211A60
+002AF7D0 D3D8!D3DDevice_Clear                                            2  {'engine': 2}  20958E 20960D
+002A9AD0 D3D8!D3DDevice_CopyRects                                        2  {'engine': 2}  1CCA69 1CD49C
+002ADF80 D3D8!D3DDevice_CreateTexture2                                   2  {'engine': 1, 'engine-save': 1}  20A2FD 272B5D
+002AD9D0 D3D8!D3DDevice_DrawIndexedVertices                              4  {'engine': 2, 'CRI': 2}  1EE28F 1EF36A 211215 21A91B
+002AD680 D3D8!D3DDevice_DrawVerticesUP                                   3  {'engine': 3}  1D6A73 1D6E2D 20A6D3
+002ABE30 D3D8!D3DDevice_EndPush                                          8  {'engine': 8}  1C2175 1C21B8 1C2563 1C26A0 1C28B3 1C29D8 1C2C0B 1C2D0C
+002B02F0 D3D8!D3DDevice_EndPushBuffer                                    1  {'CRI': 1}  219280
+002A9E20 D3D8!D3DDevice_GetDepthStencilSurface2                          4  {'engine': 4}  1EE210 1EEBD2 209653 209682
+002A9E00 D3D8!D3DDevice_GetRenderTarget2                                 2  {'engine': 2}  1EE200 1EEBC7
+002ABDA0 D3D8!D3DDevice_InsertCallback                                   3  {'CRI': 3}  21B450 21B549 21B559
+002AA330 D3D8!D3DDevice_LightEnable                                      2  {'CRI': 2}  21B060 21B0DD
+002A7800 D3D8!D3DDevice_LoadVertexShaderProgram                          8  {'engine': 8}  20AC3A 20AE6A 20AE7E 20AE92 20D985 20D9E0 20DA30 20E617
+002AC310 D3D8!D3DDevice_MakeSpace                                        9  {'engine': 9}  1EDD6D 1EDDAD 1EE0E4 1EE2F8 1EED19 1EF1A1 1EF226 1EF25E 1EF648
+002AB2C0 D3D8!D3DDevice_PersistDisplay                                   2  {'engine': 2}  1CCAA0 1CCBD6
+002A87E0 D3D8!D3DDevice_Release                                          2  {'engine': 2}  1EE1F0 1EE3C3
+002A6D20 D3D8!D3DDevice_SelectVertexShaderDirect                         7  {'engine': 7}  1C213A 1C22AB 1C2330 20D94E 20D990 20DA3B 20E62C
+002AD1C0 D3D8!D3DDevice_SetBackBufferScale                               2  {'engine': 2}  1CCABA 1CD52F
+002A6590 D3D8!D3DDevice_SetDepthClipPlanes                               3  {'CRI': 3}  225490 226246 243212
+002A8330 D3D8!D3DDevice_SetGammaRamp                                     2  {'engine': 2}  209740 209B1B
+002AA070 D3D8!D3DDevice_SetLight                                         2  {'CRI': 2}  21B050 21B0D1
+002A8640 D3D8!D3DDevice_SetMaterial                                      3  {'engine': 3}  1EE255 1EF157 20B054
+002AF490 D3D8!D3DDevice_SetPixelShaderConstant                           2  {'engine': 2}  1EE2CF 1EF293
+002AEE50 D3D8!D3DDevice_SetPixelShaderProgram                            2  {'engine': 2}  20F065 20F153
+002A4D40 D3D8!D3DDevice_SetRenderStateNotInline                          3  {'engine': 3}  1EE26A 1EE39C 1EF128
+002A59D0 D3D8!D3DDevice_SetRenderState_BackFillMode                     14  {'engine': 10, 'CRI': 4}  1783DF 178828 178C01 1BC0CF 1BCE08 1CC84F 1D684F 1EDEAF 1FBC3F 20A85F 21085F 21A2DF…
+002A5660 D3D8!D3DDevice_SetRenderState_CullMode                         24  {'engine': 16, 'CRI': 8}  178439 1788B8 178C73 1BC129 1BCE7A 1BD68E 1BD6BD 1BDB77 1BDC2C 1CC8A9 1D68A9 1EDF09…
+002A6910 D3D8!D3DDevice_SetRenderState_DoNotCullUncompressed            14  {'engine': 10, 'CRI': 4}  178556 178A80 178DDC 1BC246 1BCFE3 1CC9C6 1D69C6 1EE026 1FBDB6 20A9D6 2109D6 21A456…
+002A5820 D3D8!D3DDevice_SetRenderState_Dxt1NoiseEnable                  15  {'engine': 11, 'CRI': 4}  1784FC 1789F0 178D6A 1BC1EC 1BCF71 1CC96C 1D696C 1EDFCC 1FBD5C 20A97C 20B005 21097C…
+002A5590 D3D8!D3DDevice_SetRenderState_EdgeAntiAlias                    16  {'engine': 12, 'CRI': 4}  178484 178930 178CD2 1BC174 1BCED9 1CC8F4 1D68F4 1EDF54 1EE8D5 1FBCE4 20A904 20AF89…
+002A5980 D3D8!D3DDevice_SetRenderState_FillMode                         16  {'engine': 11, 'CRI': 5}  1783D0 178810 178BEE 1BC0C0 1BCDF5 1CC840 1D6840 1EDEA0 1EE790 1FBC30 20A850 210850…
+002A5610 D3D8!D3DDevice_SetRenderState_FogColor                         16  {'engine': 11, 'CRI': 5}  1783C1 1787F8 178BDB 1BC0B1 1BCB74 1BCDE2 1CC831 1D6831 1EDE91 1FBC21 20A841 210841…
+002A56D0 D3D8!D3DDevice_SetRenderState_FrontFace                        14  {'engine': 10, 'CRI': 4}  178448 1788D0 178C86 1BC138 1BCE8D 1CC8B8 1D68B8 1EDF18 1FBCA8 20A8C8 2108C8 21A348…
+002A57B0 D3D8!D3DDevice_SetRenderState_LineWidth                        14  {'engine': 10, 'CRI': 4}  1784DE 1789C0 178D44 1BC1CE 1BCF4B 1CC94E 1D694E 1EDFAE 1FBD3E 20A95E 21095E 21A3DE…
+002A5920 D3D8!D3DDevice_SetRenderState_LogicOp                          14  {'engine': 10, 'CRI': 4}  178475 178918 178CBF 1BC165 1BCEC6 1CC8E5 1D68E5 1EDF45 1FBCD5 20A8F5 2108F5 21A375…
+002A6990 D3D8!D3DDevice_SetRenderState_MultiSampleAntiAlias             15  {'engine': 11, 'CRI': 4}  178493 178948 178CE5 1BC183 1BCEEC 1CC903 1D6903 1EDF63 1EE946 1FBCF3 20A913 210913…
+002A6A10 D3D8!D3DDevice_SetRenderState_MultiSampleMask                  14  {'engine': 10, 'CRI': 4}  1784A2 178960 178CF8 1BC192 1BCEFF 1CC912 1D6912 1EDF72 1FBD02 20A922 210922 21A3A2…
+002A6930 D3D8!D3DDevice_SetRenderState_MultiSampleMode                  14  {'engine': 10, 'CRI': 4}  1784B1 178978 178D0B 1BC1A1 1BCF12 1CC921 1D6921 1EDF81 1FBD11 20A931 210931 21A3B1…
+002A6960 D3D8!D3DDevice_SetRenderState_MultiSampleRenderTargetMode      14  {'engine': 10, 'CRI': 4}  1784C0 178990 178D1E 1BC1B0 1BCF25 1CC930 1D6930 1EDF90 1FBD20 20A940 210940 21A3C0…
+002A5710 D3D8!D3DDevice_SetRenderState_NormalizeNormals                 16  {'engine': 12, 'CRI': 4}  1783FD 178858 178C27 1BC0ED 1BCE2E 1CC86D 1D686D 1EDECD 1EE96B 1FBC5D 20A87D 20AFC1…
+002A67F0 D3D8!D3DDevice_SetRenderState_OcclusionCullEnable              14  {'engine': 10, 'CRI': 4}  17851A 178A20 178D90 1BC20A 1BCF97 1CC98A 1D698A 1EDFEA 1FBD7A 20A99A 21099A 21A41A…
+002A4CE0 D3D8!D3DDevice_SetRenderState_PSTextureModes                   14  {'engine': 10, 'CRI': 4}  1783A3 1787C8 178BB5 1BC093 1BCDBC 1CC813 1D6813 1EDE73 1FBC03 20A823 210823 21A2A3…
+002A68D0 D3D8!D3DDevice_SetRenderState_RopZCmpAlwaysRead                14  {'engine': 10, 'CRI': 4}  178538 178A50 178DB6 1BC228 1BCFBD 1CC9A8 1D69A8 1EE008 1FBD98 20A9B8 2109B8 21A438…
+002A68F0 D3D8!D3DDevice_SetRenderState_RopZRead                         14  {'engine': 10, 'CRI': 4}  178547 178A68 178DC9 1BC237 1BCFD0 1CC9B7 1D69B7 1EE017 1FBDA7 20A9C7 2109C7 21A447…
+002A6A60 D3D8!D3DDevice_SetRenderState_SampleAlpha                      14  {'engine': 10, 'CRI': 4}  1784ED 1789D8 178D57 1BC1DD 1BCF5E 1CC95D 1D695D 1EDFBD 1FBD4D 20A96D 21096D 21A3ED…
+002A55D0 D3D8!D3DDevice_SetRenderState_ShadowFunc                       14  {'engine': 10, 'CRI': 4}  1784CF 1789A8 178D31 1BC1BF 1BCF38 1CC93F 1D693F 1EDF9F 1FBD2F 20A94F 21094F 21A3CF…
+002A4D10 D3D8!D3DDevice_SetRenderState_Simple                           86  {'engine': 67, 'CRI': 19}  17836E 178788 178B78 178E4B 178E7A 178EAA 1BC05E 1BCD7F 1BD046 1BD206 1BD243 1BD285…
+002A6860 D3D8!D3DDevice_SetRenderState_StencilCullEnable                14  {'engine': 10, 'CRI': 4}  178529 178A38 178DA3 1BC219 1BCFAA 1CC999 1D6999 1EDFF9 1FBD89 20A9A9 2109A9 21A429…
+002A66C0 D3D8!D3DDevice_SetRenderState_StencilEnable                    15  {'engine': 11, 'CRI': 4}  17841B 178888 178C4D 1BC10B 1BCE54 1CC88B 1D688B 1EDEEB 1EE8B0 1FBC7B 20A89B 21089B…
+002A6750 D3D8!D3DDevice_SetRenderState_StencilFail                      14  {'engine': 10, 'CRI': 4}  17842A 1788A0 178C60 1BC11A 1BCE67 1CC89A 1D689A 1EDEFA 1FBC8A 20A8AA 2108AA 21A32A…
+002A5750 D3D8!D3DDevice_SetRenderState_TextureFactor                    14  {'engine': 10, 'CRI': 4}  178457 1788E8 178C99 1BC147 1BCEA0 1CC8C7 1D68C7 1EDF27 1FBCB7 20A8D7 2108D7 21A357…
+002A5A30 D3D8!D3DDevice_SetRenderState_TwoSidedLighting                 14  {'engine': 10, 'CRI': 4}  1783EE 178840 178C14 1BC0DE 1BCE1B 1CC85E 1D685E 1EDEBE 1FBC4E 20A86E 21086E 21A2EE…
+002A5AB0 D3D8!D3DDevice_SetRenderState_VertexBlend                      16  {'engine': 12, 'CRI': 4}  1783B2 1787E0 178BC8 1BC0A2 1BCDCF 1CC822 1D6822 1EDE82 1EE8FA 1FBC12 20A832 20AFA5…
+002A67C0 D3D8!D3DDevice_SetRenderState_YuvEnable                        16  {'engine': 12, 'CRI': 4}  17850B 178A08 178D7D 1BC1FB 1BCF84 1CC97B 1D697B 1D6D71 1D6E49 1EDFDB 1FBD6B 20A98B…
+002A58A0 D3D8!D3DDevice_SetRenderState_ZBias                            14  {'engine': 10, 'CRI': 4}  178466 178900 178CAC 1BC156 1BCEB3 1CC8D6 1D68D6 1EDF36 1FBCC6 20A8E6 2108E6 21A366…
+002A6630 D3D8!D3DDevice_SetRenderState_ZEnable                          28  {'engine': 19, 'CRI': 9}  17840C 178870 178C3A 1BC0FC 1BCE41 1BD6EF 1BD71E 1BD7CF 1BD81E 1CC87C 1CD670 1CD8C7…
+002A9340 D3D8!D3DDevice_SetRenderTarget                                  9  {'engine': 9}  1CCA8A 1CD481 1CD5A1 1CD60E 1CD897 1CD97F 209662 209691 2096AF
+002AAF40 D3D8!D3DDevice_SetScissors                                      4  {'engine': 2, 'CRI': 2}  1BCC1F 1BD14E 21A846 21AA21
+002A7960 D3D8!D3DDevice_SetShaderConstantMode                            3  {'engine': 3}  209755 209A07 209A1B
+002A7670 D3D8!D3DDevice_SetStreamSource                                  7  {'engine': 3, 'CRI': 4}  1EE2AF 1EE4DC 1EF5F2 210BC0 2111C7 2198CC 21A8E7
+002AA4C0 D3D8!D3DDevice_SetTexture                                      10  {'engine': 9, 'CRI': 1}  1BC7EA 1BD067 1BD079 1BD52E 1D6E1B 1EE584 20A36D 20A37D 20A44F 22690D
+002A5C80 D3D8!D3DDevice_SetTextureState_BorderColor                     10  {'engine': 8, 'CRI': 2}  1BC33F 1BC8DC 1BCD2E 1CCA1F 1D6A1F 1EE07F 1FBE0F 20A2AF 210A8F 21A4AF
+002A5C10 D3D8!D3DDevice_SetTextureState_BumpEnv                         10  {'engine': 8, 'CRI': 2}  1BC35E 1BC90F 1BCD53 1CCA3E 1D6A3E 1EE09E 1FBE2E 20A2CE 210AAE 21A4CE
+002A5CC0 D3D8!D3DDevice_SetTextureState_ColorKeyColor                   10  {'engine': 8, 'CRI': 2}  1BC34E 1BC8F5 1BCD40 1CCA2E 1D6A2E 1EE08E 1FBE1E 20A2BE 210A9E 21A4BE
+002A5B00 D3D8!D3DDevice_SetTextureState_TexCoordIndex                   11  {'engine': 9, 'CRI': 2}  1BC330 1BC8C3 1BCD1C 1CCA10 1D6A10 1EE070 1EE6F3 1FBE00 20A2A0 210A80 21A4A0
+002A8450 D3D8!D3DDevice_SetTransform                                    10  {'engine': 2, 'CRI': 8}  1EE23A 1EF2AB 2259E9 225B53 225C6D 225D7D 225E85 225FEA 226236 24317A
+002A7BD0 D3D8!D3DDevice_SetVertexShader                                  2  {'engine': 2}  1D6A85 1D6DE8
+002A71E0 D3D8!D3DDevice_SetVertexShaderConstant1Fast                    19  {'engine': 14, 'CRI': 5}  1BC378 1BCAF4 1EE0B8 1EED9D 1EEDE8 1EEEDD 209728 20996E 20997A 209986 20AC18 20B618…
+002A72E0 D3D8!D3DDevice_SetVertexShaderConstantNotInlineFast            15  {'engine': 14, 'CRI': 1}  1BC381 1BCB02 1BDEBC 1BDF03 1BDF25 1EE0C1 1EEDAF 1EEDF3 1EF2CD 1EF508 209731 20AC21…
+002A88C0 D3D8!D3DDevice_SetVerticalBlankCallback                         2  {'engine': 2}  1BCB10 1BDDF6
+002A9E40 D3D8!D3DDevice_SetViewport                                      2  {'CRI': 2}  225485 2262C9
+002AD0D0 D3D8!D3DDevice_Swap                                             2  {'engine': 2}  209E10 209E3D
+002A8770 D3D8!D3DDevice_SwitchTexture                                   11  {'engine': 10, 'CRI': 1}  1BCC06 1BD027 1BD4AF 1CCB11 1CD772 1CDAE0 1EC206 1EC23B 1EF0BB 1EF0F8 2198F3
+002AE3D0 D3D8!D3DResource_AddRef                                         5  {'engine-save': 5}  272600 2726DD 27276D 272A1C 272BE4
+002AE5D0 D3D8!D3DResource_BlockUntilNotBusy                              5  {'engine': 2, 'CRI': 3}  1EC0C0 1EC16A 21565B 21569E 219C03
+002AE5A0 D3D8!D3DResource_Register                                       4  {'CRI': 4}  215490 2154EC 215586 215626
+002AE410 D3D8!D3DResource_Release                                       12  {'engine': 6, 'engine-save': 6}  1EE330 1EEC34 1EEC40 209641 20965B 20968A 27274D 27278E 272CF3 272D02 272D55 272DD0
+002AE050 D3D8!D3DTexture_GetSurfaceLevel2                                3  {'engine': 2, 'engine-save': 1}  2095AA 209636 272CD2
+002AE0A0 D3D8!D3DTexture_LockRect                                        7  {'engine': 6, 'engine-save': 1}  1D6B39 1D6B83 1D6C91 1EC3DD 1EC7BA 1EE53A 272B9D
+002B0E60 D3D8!D3DVertexBuffer_Lock2                                      2  {'CRI': 2}  21933A 219494
+002AE800 D3D8!D3D_SetPushBufferSize                                      2  {'engine': 2}  1EDE1A 1EE1C5
+002C5540 D3D8!D3D_g_DeferredRenderState                                  9  {'engine': 5, 'CRI': 4}  1BDA01 1BDA3C 1BDB4B 1EE924 1FBFFF 210FF0 21A5D6 225749 225775
+002C51D0 D3D8!D3D_g_DeferredTextureState                                22  {'engine': 19, 'CRI': 3}  1BC315 1BC87F 1BC8AB 1BCCDD 1BCD0D 1BD5D7 1BDD52 1CC9F5 1CD6D2 1CDB1E 1D69F5 1D6DA3…
+002C53D0 D3D8!D3D_g_RenderState                                         28  {'engine': 20, 'CRI': 8}  178376 17839B 178790 1787B7 178B80 178BA1 1BC066 1BC08B 1BCD87 1BCDA8 1CC7E6 1CC80B…
+002C5668 D3D8!D3D_g_pDevice                                              2  {'engine': 2}  1BCBC1 1BCBD1
+002AE820 D3D8!Direct3D_CreateDevice                                      2  {'engine': 2}  1EDE00 1EE4B1
+002C8742 D3DX!sub_2C8742                                                 1  {'engine': 1}  1EF2BB
+002CBEDB D3DX!sub_2CBEDB                                                 1  {'engine-save': 1}  272CE7
+0031289C DSOUND!DirectSoundCreate                                        2  {'engine': 1, 'CRI': 1}  1D6AB3 21BE1F
+003128E3 DSOUND!DirectSoundCreateBuffer                                  1  {'CRI': 1}  22420A
+0031293A DSOUND!DirectSoundCreateStream                                  1  {'CRI': 1}  24046F
+0030F4D1 DSOUND!DirectSoundDoWork                                        4  {'engine': 3, 'CRI': 1}  1D6512 1D65B0 1D6D33 21BA60
+0030CEA2 DSOUND!DirectSoundOverrideSpeakerConfig                         1  {'CRI': 1}  21BC86
+0030F35B DSOUND!IDirectSoundBuffer_GetCurrentPosition                    3  {'CRI': 3}  224080 224CAC 22C363
+0030F33F DSOUND!IDirectSoundBuffer_GetStatus                             9  {'CRI': 9}  224070 224BF9 224C5F 22BF6F 22BFEE 22C0D3 22C14E 22C1D6 22C250
+0030F397 DSOUND!IDirectSoundBuffer_Lock                                  4  {'CRI': 4}  2240A0 224231 22C296 22C6C2
+0030F25B DSOUND!IDirectSoundBuffer_Play                                  4  {'CRI': 4}  224030 224C20 224C32 22C0AA
+0030CDD4 DSOUND!IDirectSoundBuffer_Release                               3  {'CRI': 3}  21BD00 21BDAC 22C001
+0030F37B DSOUND!IDirectSoundBuffer_SetCurrentPosition                    4  {'CRI': 4}  224090 2242C6 224C89 22C083
+0030F207 DSOUND!IDirectSoundBuffer_SetFilter                             2  {'CRI': 2}  223FF0 224D91
+00311053 DSOUND!IDirectSoundBuffer_SetFrequency                          4  {'CRI': 4}  223FD0 224D29 22C05A 22C550
+0030F223 DSOUND!IDirectSoundBuffer_SetHeadroom                           4  {'CRI': 4}  224000 2242D3 22BE49 245D87
+0030F31F DSOUND!IDirectSoundBuffer_SetLoopRegion                         2  {'CRI': 2}  224060 224CF3
+0030F23F DSOUND!IDirectSoundBuffer_SetMixBinVolumes_8                    4  {'CRI': 4}  224020 224B36 224BD7 245DC7
+0031108B DSOUND!IDirectSoundBuffer_SetMixBins                            3  {'CRI': 3}  224010 224A8C 245DA7
+0030F197 DSOUND!IDirectSoundBuffer_SetVolume                             3  {'CRI': 3}  223FE0 224D55 22C47B
+0030F2A3 DSOUND!IDirectSoundBuffer_Stop                                  2  {'CRI': 2}  22BF46 22C1A6
+0030F2BB DSOUND!IDirectSoundBuffer_StopEx                                2  {'CRI': 2}  224054 224C4F
+0030CDB4 DSOUND!IDirectSoundBuffer_Unlock                                4  {'CRI': 4}  2240B0 2242BC 22C2CB 22C74A
+0030F45E DSOUND!IDirectSoundStream_Pause                                 4  {'CRI': 4}  224110 224FA6 224FC6 24085C
+0030F44F DSOUND!IDirectSoundStream_SetFilter                             2  {'CRI': 2}  2240E0 225051
+003112E2 DSOUND!IDirectSoundStream_SetFrequency                          2  {'CRI': 2}  2240C0 224FE9
+0030F459 DSOUND!IDirectSoundStream_SetMixBinVolumes_8                    3  {'CRI': 3}  224100 224E36 224ED7
+003112EC DSOUND!IDirectSoundStream_SetMixBins                            2  {'CRI': 2}  2240F0 224F71
+0030F43B DSOUND!IDirectSoundStream_SetVolume                             2  {'CRI': 2}  2240D0 225015
+00311F71 DSOUND!IDirectSound_CommitDeferredSettings                      2  {'engine': 2}  1F0590 1F08C2
+0031254E DSOUND!IDirectSound_CreateSoundBuffer                           1  {'CRI': 1}  22BE24
+0030F009 DSOUND!IDirectSound_DownloadEffectsImage                        2  {'engine': 2}  1F0520 1F0C6A
+0030EFD1 DSOUND!IDirectSound_GetCaps                                     2  {'CRI': 2}  21BCF0 21BE30
+0030CD9E DSOUND!IDirectSound_Release                                     2  {'CRI': 2}  21BCE0 21BD8C
+003125B6 DSOUND!IDirectSound_SetDistanceFactor                           2  {'engine': 2}  1F0540 1F0656
+003125DA DSOUND!IDirectSound_SetDopplerFactor                            2  {'engine': 2}  1F0550 1F0874
+003126D6 DSOUND!IDirectSound_SetI3DL2Listener                            2  {'CRI': 2}  21C140 21C3A5
+0030F0B5 DSOUND!IDirectSound_SetMixBinHeadroom                           2  {'engine': 2}  1F0530 1F0D87
+003125FE DSOUND!IDirectSound_SetOrientation                              2  {'engine': 2}  1F0560 1F07BE
+00312648 DSOUND!IDirectSound_SetPosition                                 2  {'engine': 2}  1F0570 1F06DA
+003126A1 DSOUND!IDirectSound_SetVelocity                                 2  {'engine': 2}  1F0580 1F082A
+001682C0 XAPI!sub_1682C0                                                 5  {'game': 5}  164C6D 165852 1662F5 166CAB 16770C
+001682D0 XAPI!sub_1682D0                                                 1  {'game': 1}  163473
+00168320 XAPI!sub_168320                                                 1  {'game': 1}  1634DD
+00168370 XAPI!sub_168370                                                 7  {'game': 7}  164A1C 16561C 1660CC 166B0E 166B35 166B57 16754C
+00168440 XAPI!sub_168440                                                 6  {'game': 6}  164338 164F97 1650FD 165CB9 166940 16697C
+00168530 XAPI!sub_168530                                                 3  {'game': 3}  165C7A 165C8C 165CA0
+00168580 XAPI!sub_168580                                                 3  {'game': 3}  166948 16695A 16696E
+001685A0 XAPI!sub_1685A0                                                 1  {'game': 1}  16379B
+00168800 XAPI!sub_168800                                                 1  {'game': 1}  6DB4D
+00168820 XAPI!sub_168820                                                 1  {'game': 1}  6E52E
+00168830 XAPI!sub_168830                                                 9  {'game': 9}  164096 164C8E 164FA6 165873 1659F6 166316 166B5F 1675D3 1676BE
+00168910 XAPI!sub_168910                                                 6  {'game': 6}  163FB3 164255 165005 165A45 166495 166E55
+00168A56 XAPI!sub_168A56                                                 2  {'engine': 1, 'CRI': 1}  1FDB05 210685
+00168B0D XAPI!sub_168B0D                                                 8  {'engine': 6, 'CRI': 2}  1FD2F2 1FD360 1FD8A6 1FD914 20FE42 20FEB0 210426 210494
+00168C07 XAPI!sub_168C07                                                 2  {'engine': 1, 'CRI': 1}  1FDAA1 210618
+00168D12 XAPI!sub_168D12                                                11  {'game': 2, 'engine': 6, 'CRI': 3}  38106 3B709 1AE700 1AE730 1AE7AA 1C87AD 1C87C4 1C87E4 21BA54 21BEC9 21BEDB
+00168E84 XAPI!sub_168E84                                                 2  {'engine': 2}  1FD2FD 20FE4D
+00168EB0 XAPI!sub_168EB0                                                 3  {'CRI': 3}  21B1F9 22CF52 22CFE5
+00169D96 XAPI!sub_169D96                                                53  {'engine': 25, 'CRI': 23, 'engine-save': 5}  1AE962 1AE9CA 1C8E94 1D9608 1D96DD 1F0BC1 1F0BE8 1F9E53 1FA060 1FA0BC 1FA13D 1FA252…
+00169F3F XAPI!sub_169F3F                                                 2  {'CRI': 2}  2114BE 21167D
+00169F65 XAPI!sub_169F65                                                 9  {'CRI': 9}  21149D 211509 2115CC 211851 21185D 2118E9 211949 2119A9 211AE7
+0016A31F XAPI!sub_16A31F                                                 2  {'engine': 1, 'CRI': 1}  1FD59A 2100EA
+0016A32C XAPI!sub_16A32C                                                 5  {'engine': 5}  1CE860 1CE8A8 1CEAD0 1CEAE5 1F0C22
+0016A393 XAPI!sub_16A393                                                 5  {'engine': 5}  1CE871 1CE8C1 1CEB01 1CEB0F 1F0C40
+0016A3B4 XAPI!sub_16A3B4                                                 5  {'engine': 5}  1CE89E 1CE943 1CEB28 1CEB2E 1F0C94
+0016A476 XAPI!sub_16A476                                                 1  {'CRI': 1}  243EE7
+0016A4BB XAPI!sub_16A4BB                                                17  {'CRI': 10, 'engine-save': 7}  226B74 228943 22895B 22904D 243D4B 24447A 24456B 24486F 2448B7 257424 271C0B 271C3B…
+0016A4F9 XAPI!sub_16A4F9                                                 3  {'engine-save': 3}  2727FD 27285C 272937
+0016A55E XAPI!sub_16A55E                                                 6  {'CRI': 3, 'engine-save': 3}  228962 228985 228998 272A75 272AB3 272D3C
+0016A5B8 XAPI!sub_16A5B8                                                12  {'CRI': 11, 'engine-save': 1}  226B7E 243BF1 243C31 243CD9 243E8C 243E98 2444A1 2444BC 244896 2448C0 25742E 272928
+0016B0CB XAPI!sub_16B0CB                                                 1  {'engine-save': 1}  271CBF
+0016B1BF XAPI!sub_16B1BF                                                 2  {'engine': 1, 'CRI': 1}  1FDB28 2106A8
+0016B9F4 XAPI!sub_16B9F4                                                 1  {'engine-save': 1}  271D24
+0016BA93 XAPI!sub_16BA93                                                 1  {'engine-save': 1}  271D14
+0016BC09 XAPI!sub_16BC09                                                 1  {'CRI': 1}  243AE1
+0016BC58 XAPI!sub_16BC58                                                 2  {'CRI': 2}  243BD0 2449B4
+0016BC74 XAPI!sub_16BC74                                                 2  {'CRI': 2}  243BCA 2449AE
+0016D4DC XAPI!sub_16D4DC                                                 1  {'CRI': 1}  243B06
+0016E30F XAPI!sub_16E30F                                                 1  {'game': 1}  167AC9
+0016E340 XAPI!sub_16E340                                                 1  {'game': 1}  167AFA
+0016E379 XAPI!sub_16E379                                                 1  {'game': 1}  167B33
+0016E3AB XAPI!sub_16E3AB                                                 1  {'game': 1}  167B65
+0016E3CF XAPI!sub_16E3CF                                                 1  {'game': 1}  167B89
+0016E400 XAPI!sub_16E400                                                 1  {'game': 1}  167BBA
+0016E424 XAPI!sub_16E424                                                 1  {'game': 1}  167BDE
+0016E448 XAPI!sub_16E448                                                 1  {'game': 1}  167C02
+0016F2D2 XAPI!sub_16F2D2                                                14  {'engine': 8, 'CRI': 3, 'engine-save': 3}  1AE2BA 1D95DE 1D9602 1F9C55 1F9C89 1FA137 1FA344 1FA3AD 22319E 228C4B 228C7D 27243C…
+0016F3BF XAPI!sub_16F3BF                                                20  {'engine': 19, 'engine-save': 1}  1D96BD 1D96D7 1F9E43 1FA05A 1FA0B6 1FA24C 1FA49B 1FCD01 1FCDA4 1FD0C5 1FD100 1FD140…
+0016F495 XAPI!sub_16F495                                                 2  {'engine': 1, 'engine-save': 1}  1FA448 2715EC
+0016F519 XAPI!sub_16F519                                                12  {'engine': 7, 'CRI': 1, 'engine-save': 4}  1AE2F4 1F0B98 1F0BA6 1FA43C 1FA457 1FC582 1FC65A 228C69 2720FA 27211F 27217F 272BAC
+0016F7B4 XAPI!sub_16F7B4                                                 2  {'engine': 2}  1FA332 1FA3DE
+0016F8F1 XAPI!sub_16F8F1                                                 2  {'engine': 2}  1AE34A 1FD5DC
+0016F942 XAPI!sub_16F942                                                 1  {'CRI': 1}  210150
+0016FCFB XAPI!sub_16FCFB                                                11  {'engine': 6, 'CRI': 5}  1AE31A 1C8B0B 1FA10B 1FA42F 1FC560 1FCBEA 229717 2299C4 2417D4 2417DE 2441B0
+0016FD36 XAPI!sub_16FD36                                                30  {'engine': 24, 'CRI': 3, 'engine-save': 3}  1AE274 1AE957 1AE9BF 1C8AEE 1D95C4 1D968C 1F0B67 1F9C2C 1F9CA5 1F9E25 1FA043 1FA099…
+001701A3 XAPI!sub_1701A3                                                 2  {'CRI': 2}  241777 24182E
+001713C1 XAPI!sub_1713C1                                                 2  {'engine-save': 2}  2726B4 2726FA
+001713F9 XAPI!sub_1713F9                                                 3  {'engine-save': 3}  2727E5 272846 272E9C
+00171840 XAPI!sub_171840                                                 1  {'engine-save': 1}  2702DE
+0017188E XAPI!sub_17188E                                                 1  {'engine-save': 1}  2702E9
+00171ABF XAPI!sub_171ABF                                                 1  {'CRI': 1}  24181A
+00171CC8 XAPI!sub_171CC8                                                 2  {'engine-save': 2}  2715D7 271679
+00171EC1 XAPI!sub_171EC1                                                 1  {'engine-save': 1}  2728B0
+0017200A XAPI!sub_17200A                                                 1  {'engine': 1}  180D1C
+001720A1 XAPI!sub_1720A1                                                 5  {'engine': 2, 'CRI': 3}  17AADB 1EF7BB 2154BE 21557D 21561D
+00172111 XAPI!sub_172111                                                 3  {'engine': 3}  20AB4A 20AB84 20ABBE
+00172127 XAPI!sub_172127                                                 4  {'engine': 1, 'CRI': 3}  1EC19B 215681 2156C1 219C25
+00172DA7 XAPI!sub_172DA7                                                 2  {'CRI': 2}  21ACF1 21ADF9
+00173417 XAPI!sub_173417                                                 2  {'CRI': 2}  21ACCA 21ADD4
+00173527 XAPI!sub_173527                                                51  {'game': 12, 'engine': 27, 'CRI': 12}  44A9F 45DAB 45F06 492BB 5150F 52E06 53E13 53E32 5420B A9F8B AA517 D4730…
+00173625 XAPI!sub_173625                                                 2  {'engine': 2}  1BDEAC 1BDEF3
+00173670 XAPI!sub_173670                                                 1  {'engine': 1}  1EF424
+001739FD XAPI!sub_1739FD                                                 2  {'engine': 2}  1EEC7F 1EF4BF
+0016893B XAPILIB!CreateEventA                                            1  {'CRI': 1}  228F53
+0016A2B1 XAPILIB!CreateThread                                            7  {'engine': 1, 'CRI': 6}  1FDAF5 210675 2117AC 2117E4 21181C 211AC1 22CFB6
+0016A024 XAPILIB!ExitThread                                              5  {'CRI': 5}  211593 2115FE 211696 211A87 22CF71
+0016A036 XAPILIB!GetExitCodeThread                                       4  {'CRI': 4}  2118C2 211921 211982 211B12
+00168FF8 XAPILIB!GetLastError                                           17  {'engine': 6, 'CRI': 11}  1AE280 1AE2C5 1AE355 1F0B73 1F0BF2 1FA421 21015A 222027 222049 222095 22306D 228B3F…
+00169191 XAPILIB!GetOverlappedResult                                     1  {'CRI': 1}  228B32
+00169E64 XAPILIB!GetThreadPriority                                       3  {'CRI': 3}  21147C 243A62 243A75
+002847D7 XAPILIB!OutputDebugStringA                                      7  {'engine': 5, 'CRI': 2}  1F00BE 20A1A6 20A1CC 20A1FF 20A225 2442FC 244390
+00284653 XAPILIB!QueryPerformanceCounter                                29  {'engine': 12, 'CRI': 17}  18E8E0 18E910 18E960 18E99A 18EA38 18EC30 18ED80 18EDD0 18EE64 18EEDA 1CCB3F 1CCB5D…
+00169E12 XAPILIB!SetThreadPriority                                      13  {'CRI': 13}  21148B 2114CC 2114FD 211543 21165C 2117BE 2117F6 21182E 2118DE 21193D 21199D 211ACE…
+00169EB8 XAPILIB!SetThreadPriorityBoost                                  5  {'CRI': 5}  2117CC 211804 21183C 211866 211ADB
+0016A011 XAPILIB!SwitchToThread                                          3  {'CRI': 3}  2118EE 21194E 2119AE
+0017182C XAPILIB!XCalculateSignatureBegin                                1  {'engine-save': 1}  2702C3
+00334027 XAPILIB!XGetDeviceChanges                                       2  {'engine': 1, 'engine-save': 1}  183376 270F2F
+00334005 XAPILIB!XGetDevices                                             2  {'engine': 1, 'engine-save': 1}  1831F5 270F15
+0016A719 XAPILIB!XGetLaunchInfo                                          1  {'engine': 1}  1CD23B
+0016A408 XAPILIB!XGetSectionSize                                         5  {'engine': 5}  1CE879 1CE8C9 1CEAFA 1CEB08 1F0C38
+00333CBF XAPILIB!XInputClose                                             2  {'engine': 2}  182CE9 1833A5
+00333CCB XAPILIB!XInputGetCapabilities                                   2  {'engine': 2}  183258 1833F2
+00333EA3 XAPILIB!XInputGetState                                          1  {'engine': 1}  18348F
+00333C69 XAPILIB!XInputOpen                                              2  {'engine': 2}  183247 1833E5
+00333F16 XAPILIB!XInputSetState                                          2  {'engine': 2}  18300D 18305A
+0016A5F6 XAPILIB!XLaunchNewImageA                                        6  {'engine': 6}  1CCBEE 1CCC0D 1CCC18 1CCC43 1CCEA3 1D77AE
+0016BB2E XAPILIB!XMUNameFromDriveLetter                                  1  {'engine-save': 1}  270EDB
+00334566 XAPILIB!XMountMUA                                               1  {'engine-save': 1}  271B8F
+0016B641 XAPILIB!XMountUtilityDrive                                      1  {'engine-save': 1}  271F4F
+00334804 XAPILIB!XUnmountMU                                              1  {'engine-save': 1}  271AC4
+00332D74 XAPILIB!g_DeviceType_Gamepad                                    5  {'engine': 5}  1831A9 1831F1 183243 183372 1833E1
+00332CF8 XAPILIB!g_DeviceType_MU                                         3  {'engine': 1, 'engine-save': 2}  1831B5 270F11 270F2B
+002E8A0D XGRAPHC!XGSetTextureHeader                                      4  {'engine': 2, 'CRI': 2}  1EEBFD 1EEC28 215563 215603
+00285DF5 XGRAPHC!XGWriteSurfaceOrTextureToXPR                            1  {'engine-save': 1}  272D49
+002E8B67 XGRPH!sub_2E8B67                                                2  {'engine': 2}  20B8FC 20F0CF
+002EC851 XGRPH!sub_2EC851                                                5  {'engine': 5}  20B938 20B947 20B955 20F11C 20F12A
+002F0DE3 XGRPH!sub_2F0DE3                                                2  {'engine': 2}  20B8CC 20F0AE
+002F0E17 XGRPH!sub_2F0E17                                                1  {'engine': 1}  20E609
+002F4464 XGRPH!sub_2F4464                                               30  {'eh-funclets': 30}  29A59C 29A5B0 29A62D 29A637 29A641 29A64B 29A65F 29A669 29A673 29A67D 29A687 29A691…
+00305C46 XGRPH!sub_305C46                                                1  {'eh-funclets': 1}  29AC4F
+00308A3B XGRPH!sub_308A3B                                                1  {'eh-funclets': 1}  29AC63
+00334000 XPP!sub_334000                                                  1  {'engine': 1}  1831E5

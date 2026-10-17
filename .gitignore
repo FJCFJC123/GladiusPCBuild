@@ -1,0 +1,32 @@
+# Retail game data and anything derived from it - never committed
+game/
+bec_unpacked/
+*.iso
+*.xbe
+*.bec
+build/
+game_extract.log
+
+# Build intermediates and packaged builder
+src/obj/
+builder/build/
+builder/dist/
+builder/payload/
+__pycache__/
+*.pyc
+
+# Local source backups (git history replaces these)
+snapshots/
+
+# Logs and run output
+*.log
+
+# Local design notes (kept out of the repo)
+CONTAINER.md
+RENDERER.md
+XBE_CONVERTER_PROVENANCE.txt
+
+# local-only: character configs (tools/glbchars.py), editor backups
+tools/glbchars.json
+tools/glbchars/
+editor_backups/
