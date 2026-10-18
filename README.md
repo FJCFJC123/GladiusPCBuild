@@ -11,8 +11,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 > **No game files are included.** You need your own copy of the retail Xbox disc (USA). The GladiusPort Builder
 > converts it into a PC install on your machine.
 
-- 📖 **[How it works](docs/TECHNICAL.md)**: kernel replacement, the Direct3D 8 → 11 layer and the visual enhancements
-- 🛠️ **[Gladius Editor](docs/EDITOR.md)**: the built-in level editor
+-  **[How it works](docs/TECHNICAL.md)**: kernel replacement, the Direct3D 8 → 11 layer and the visual enhancements
+-  **[Gladius Editor](docs/EDITOR.md)**: the built-in level editor
 
 ---
 
