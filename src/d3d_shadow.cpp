@@ -317,8 +317,8 @@ static void __fastcall cull_planes(BYTE *cam)
     float *pos = (float *)(cam + 0x130), *fwd = (float *)(cam + 0x160);   // fwd: backward axis
     float *hw = (float *)(cam + 0x27C), *hh = (float *)(cam + 0x280), *fr = (float *)(cam + 0x278);
     float save[6] = {pos[0], pos[1], pos[2], *hw, *hh, *fr};
-    // toward the sun too: casters of visible ground sit up the sun ray, so the apex also moves sunward by S (still
-    // holding the whole view frustum while S <= 2 tan * B). Sun from last frame's shadow pass.
+    // toward the sun too: casters of visible ground sit up the sun ray, so the apex also moves sunward by S, clamped so
+    // the whole view frustum stays inside. Sun from last frame's shadow pass.
     float sun = 0, sw[3] = {};
     if (g_cull_sun > 0 && g_prev_valid && g_d3d.frame - g_prev_frame <= 2) {
         const float *rows[3] = {(float *)(cam + 0x140), (float *)(cam + 0x150), (float *)(cam + 0x160)};
@@ -333,10 +333,29 @@ static void __fastcall cull_planes(BYTE *cam)
         if (l > 1e-6f) {
             for (float &v : sw) v /= l;
             sun = g_cull_sun;
+            // The widened frustum must still hold the real apex (and with it the view frustum):
+            // S * sideways <= T * (B + S - S * ahead), T = widened tangent of the narrower axis. A narrow cutscene
+            // lens (scene04va: 11.6 / 4.8 deg) allows only a few units; unclamped, its actors, trees and sky were culled.
+            float n = *(float *)(cam + 0x274);
+            if (n > 1e-6f) {
+                float t = g_cull_widen * (*hw < *hh ? *hw : *hh) / n, side2 = 0, ahead = 0;
+                for (int i = 0; i < 3; i++) {
+                    const float *r = rows[i];
+                    float rl = sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+                    float d = rl > 1e-6f ? (sw[0] * r[0] + sw[1] * r[1] + sw[2] * r[2]) / rl : 0;
+                    if (i == 2)
+                        ahead = -d;                     // row +0x160 is the backward axis
+                    else
+                        side2 += d * d;
+                }
+                float den = sqrtf(side2) + t * ahead - t;
+                if (den > 0 && sun > 0.9f * t * g_cull_back / den)
+                    sun = 0.9f * t * g_cull_back / den;
+            }
         }
         static DWORD logged;
         if (g_d3d.frame - logged >= 1800 && (logged = g_d3d.frame, true))
-            port_log("shadows: cull toward sun (world) %.2f %.2f %.2f, %.0f units\n", sw[0], sw[1], sw[2], sun);
+            port_log("shadows: cull toward sun (world) %.2f %.2f %.2f, %.1f units\n", sw[0], sw[1], sw[2], sun);
     }
     float fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
     if (fl > 1e-6f)
