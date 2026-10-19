@@ -166,14 +166,14 @@ struct InjectedPress {
     DWORD port;                                        // "P2A" = port 2 (default port 1)
 };
 static DWORD g_press_ports;                            // ports that injected presses use (reported as present)
-static InjectedPress g_presses[32];
+static InjectedPress g_presses[96];
 static int g_npresses = -1;
 
 static void load_presses()
 {
     g_npresses = 0;
     if (PORT_RELEASE) return;                           // no scripted input in release builds
-    char ini[MAX_PATH], val[512];
+    char ini[MAX_PATH], val[2048];
     GetModuleFileNameA(nullptr, ini, MAX_PATH);
     strcpy(strrchr(ini, 0x5C) + 1, port_ini_name());
     GetPrivateProfileStringA("debug", "Press", "", val, sizeof val, ini);
@@ -181,7 +181,7 @@ static void load_presses()
         {"START", XB_START, -1}, {"BACK", XB_BACK, -1}, {"UP", XB_DPAD_UP, -1}, {"DOWN", XB_DPAD_DOWN, -1},
         {"LEFT", XB_DPAD_LEFT, -1}, {"RIGHT", XB_DPAD_RIGHT, -1}, {"A", 0, XB_A}, {"B", 0, XB_B}, {"X", 0, XB_X},
         {"Y", 0, XB_Y}, {"BLACK", 0, XB_BLACK}, {"WHITE", 0, XB_WHITE}, {"LT", 0, XB_LT}, {"RT", 0, XB_RT}};
-    for (char *t = strtok(val, ", "); t && g_npresses < 32; t = strtok(nullptr, ", ")) {
+    for (char *t = strtok(val, ", "); t && g_npresses < 96; t = strtok(nullptr, ", ")) {
         char *colon = strchr(t, ':');
         if (!colon)
             continue;
