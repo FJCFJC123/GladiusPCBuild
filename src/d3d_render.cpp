@@ -401,11 +401,13 @@ static void tex_dims(const XPixelContainer *t, UINT *w, UINT *h)
 }
 static std::map<TexKey, TexEntry> g_tex_cache;
 
+static volatile LONG g_all_dirty_req;
+
+// Called from the window thread (F4). Only raises a flag: taking the D3D lock there deadlocked when the game thread
+// held it while waiting on the window thread. d3d_texture_srv (under the lock) applies it.
 void d3d_textures_all_dirty()
 {
-    D3DLock lock;
-    for (auto &kv : g_tex_cache)
-        kv.second.dirty = true;
+    InterlockedExchange(&g_all_dirty_req, 1);
 }
 
 void d3d_texture_dirty(XPixelContainer *t)
@@ -736,6 +738,9 @@ ID3D11ShaderResourceView *d3d_texture_srv(DWORD data, DWORD format, DWORD size)
     ProfScope pz(PZ_TEXTURE);
     if (d3d_tracing() && !size)
         tex_dump_dds(data, format);
+    if (g_all_dirty_req && InterlockedExchange(&g_all_dirty_req, 0))
+        for (auto &kv : g_tex_cache)
+            kv.second.dirty = true;
     TexEntry &e = g_tex_cache[{data, format, size}];
     if (e.srv && !e.dirty) {
         if (e.checked_frame == g_d3d.frame)
