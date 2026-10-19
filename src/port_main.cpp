@@ -926,6 +926,100 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     g_watch_addr = PORT_RELEASE ? 0 : strtoul(val, nullptr, 16);
     if (g_watch_addr)
         port_log("debug: hardware write watch on %08X\n", g_watch_addr);
+    // Fixed-size name/string buffers, all built by C++ ctors (`push size` in each thunk of the __xc table) that run on
+    // the game thread, after this. A full buffer hands out NULL and callers don't check: stock items.tok fills ~99% of
+    // ItemDBStringBuffer, so modded item lists crashed in the first lookup by name (0x77200). Raise every one to the
+    // block allocator's ceiling (0x177F00: block sizes in 15 bits of 4-byte units -> 0x7FFF units). Their memory comes
+    // from the CRT heap (0x1768A0 -> malloc), so the cost is ~3 MB of container main.
+    {
+        static const struct { DWORD push; DWORD size; const char *name; } bufs[] = {
+            {0x29AEB0, 0x200, "GlobalVarStringBuffer"},   {0x29AF40, 0x6000, "FaqStrings"},
+            {0x29B050, 0x1000, "StoryEventStrings"},      {0x29B0C0, 0x3000, "ActorStringBuffer"},
+            {0x29B1B0, 0x71C, "BadgeStringBuffer"},       {0x29B2E0, 0x1000, "CharacterNameBuffer"},
+            {0x29B330, 0x2800, "ClassDefStrings"},        {0x29B4A0, 0x800, "TextFloaterStringBuffer"},
+            {0x29B6F0, 0x14820, "ItemDBStringBuffer"},    {0x29B720, 0x3000, "JournalStringBuffer"},
+            {0x29BD60, 0xD8CC, "TokenStringBuffer"},      {0x29C555, 0x2000, "ConsoleSmallSize"},
+            {0x29C790, 0x4000, "AnimNames"},              {0x29C7B5, 0x3000, "anim_CharacterIndex"},
+            {0x29C7D5, 0x4000, "anim_RotNames"},          {0x29C7F5, 0x1000, "anim_RawRotNames"},
+            {0x29C815, 0x4000, "anim_PosNames"},          {0x29C835, 0x800, "anim_FloatNames"},
+            {0x29C855, 0x800, "anim_IntNames"},           {0x29C875, 0x6000, "anim_BoolNames"},
+            {0x29C895, 0x200, "anim_EventCommands"},      {0x29C8B5, 0x19000, "anim_XPosNames"},
+            {0x29C8D5, 0x1E000, "anim_XRotNames"},        {0x29C980, 0xC000, "fxnames"},
+            {0x29CA60, 0x1000, "TintSetStringBuffer"},    {0x29D6E5, 0x1000, "PaxName"},
+            {0x29D735, 0x4000, "MeshLoader"},             {0x29D790, 0xBB8, "PaxConfigStrings"},
+        };
+        const DWORD ceiling = 0x1FFF0;
+        int raised = 0;
+        for (const auto &b : bufs) {
+            BYTE *p = (BYTE *)b.push;
+            if (p[0] == 0x68 && *(DWORD *)(p + 1) == b.size) {
+                *(DWORD *)(p + 1) = ceiling;
+                raised++;
+            } else {
+                port_log("game: %s - unexpected bytes at %06X, not enlarged\n", b.name, b.push);
+            }
+        }
+        port_log("game: %d of %d string buffers raised to %u bytes (ItemDB was 84000)\n", raised,
+                 (int)(sizeof bufs / sizeof bufs[0]), ceiling);
+    }
+    // Fixed object pools: static arrays in the XBE's data, threaded into a freelist by one init function each (run from
+    // a C++ ctor). Nothing else addresses the arrays (their base getters have no callers) and the capacity the stats
+    // ctor (0x1776B0) records is display only, so a pool moves by rewriting its init's six constants: head = base,
+    // link = base + elem, loop bound = (n-1) * elem, terminator at base + (n-1) * elem, stats bytes = n * elem.
+    // The new arrays come from container main (synced, same address on every PC). School (5) and LeagueOfficeData (1)
+    // use a different init and stay.
+    {
+        static const struct { DWORD init, len, base, elem, count; const char *name; } pools[] = {
+            {0x01B070, 0x52, 0x38C7B0, 0x2C, 150, "WayPoint"},      {0x0247D0, 0x52, 0x38EC88, 0x10, 1200, "GlobalVar"},
+            {0x054860, 0x52, 0x3959D8, 0xC, 65, "Badge"},           {0x054800, 0x52, 0x3952B8, 0x1C, 65, "BadgeData"},
+            {0x054940, 0x52, 0x395CE8, 0x38, 455, "Prizes"},        {0x05DAF0, 0x55, 0x39DDF8, 0xAC, 245, "Character"},
+            {0x06B460, 0x52, 0x3A91C0, 0x40, 64, "bar_Floater"},    {0x06BD00, 0x52, 0x3AA1E8, 0x38, 64, "box_Floater"},
+            {0x06C590, 0x52, 0x3AB010, 0x38, 64, "text_Floater"},   {0x079860, 0x52, 0x3AD830, 0x28, 1000, "Item"},
+            {0x079920, 0x52, 0x3B9090, 0x10, 6528, "InventoryItem"}, {0x0798C0, 0x52, 0x3B7470, 0x18, 300, "ShopItemData"},
+            {0x09BD80, 0x52, 0x3D51C0, 0x14, 840, "Encounter"},     {0x09BD20, 0x52, 0x3D44A0, 0x30, 70, "EncounterData"},
+            {0x09BE40, 0x52, 0x3DA390, 0x14, 225, "League"},        {0x09BDE0, 0x52, 0x3D9360, 0x5C, 45, "LeagueData"},
+            {0x09C020, 0x52, 0x3DDA68, 0x30, 45, "LeagueOffice"},   {0x09BF30, 0x52, 0x3DBFB8, 0x10, 225, "Recruit"},
+            {0x09BED0, 0x52, 0x3DB528, 0xC, 225, "RecruitData"},    {0x09BF90, 0x52, 0x3DCDC8, 0x10, 200, "OpponentSchool"},
+            {0x0B10F0, 0x52, 0x3EFE68, 0x28, 45, "Shop"},           {0x0B1090, 0x52, 0x3EF810, 0x24, 45, "ShopData"},
+            {0x0B5F00, 0x52, 0x3F0BF8, 0x20, 4000, "Skill"},        {0x0C9050, 0x52, 0x410DA8, 0x2C, 45, "Town"},
+            {0x0CA650, 0x52, 0x411578, 0x48, 245, "TrackerCharacter"}, {0x178F80, 0x52, 0x46C978, 0x14, 4000, "Texture"},
+            {0x178EF0, 0x55, 0x41E778, 0xA0, 2000, "tex_Bitmap"},   {0x1C5380, 0x52, 0x4C5D88, 0x50, 160, "tint_Set"},
+            {0x1E5E50, 0x52, 0x4CF208, 0x14, 32, "Pak"},
+        };
+        const DWORD scale = 4;
+        int moved = 0;
+        size_t bytes = 0;
+        for (const auto &p : pools) {
+            const DWORD n = p.count, N = p.count * scale;
+            const DWORD from[5] = {p.base, p.base + p.elem, (n - 1) * p.elem, p.base + (n - 1) * p.elem, n * p.elem};
+            BYTE *f = (BYTE *)p.init;
+            int sites[8], vals[8], hits = 0;
+            for (DWORD k = 0; k + 4 <= p.len && hits <= 6; k++)
+                for (int v = 0; v < 5; v++)
+                    if (*(DWORD *)(f + k) == from[v]) {
+                        if (hits < 8) sites[hits] = k, vals[hits] = v;
+                        hits++;
+                        k += 3;
+                        break;
+                    }
+            if (hits != 6) {
+                port_log("game: pool %s - unexpected init at %06X (%d constants), not moved\n", p.name, p.init, hits);
+                continue;
+            }
+            DWORD nb = (DWORD)(uintptr_t)game_alloc((size_t)N * p.elem, true);
+            if (!nb) {
+                port_log("game: pool %s - no memory for %u, not moved\n", p.name, N);
+                continue;
+            }
+            const DWORD to[5] = {nb, nb + p.elem, (N - 1) * p.elem, nb + (N - 1) * p.elem, N * p.elem};
+            for (int i = 0; i < 6; i++)
+                *(DWORD *)(f + sites[i]) = to[vals[i]];
+            moved++;
+            bytes += (size_t)N * p.elem;
+        }
+        port_log("game: %d of %d object pools moved to container memory at %ux capacity (%.2f MB)\n", moved,
+                 (int)(sizeof pools / sizeof pools[0]), scale, bytes / 1048576.0);
+    }
     // [game] UnlockVersus=1: always offer the main menu's "VersuS" item
     if (GetPrivateProfileIntA("game", "UnlockVersus", 0, ini)) {
         WORD *jcc = (WORD *)0xFD5E0;                    // je 0xFD62E (74 4C)
