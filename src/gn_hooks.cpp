@@ -536,8 +536,41 @@ static void exact_reciprocals()
     port_log("net: %d/9 rcpps reciprocals made exact (cross-CPU determinism)\n", n);
 }
 
+// Versus join order: the join panel (main menu +0xC4) lists the joined pads in the order Start was pressed (+0xC4..
+// +0xD0, count +0xB8), and the match start (0xFD8BC) maps pad -> player from that list (0x183070). Pads that joined
+// out of order (pad 2 before pad 1) got swapped players, and battle input followed the wrong controller. Sort the
+// list into pad order first - the same as everyone joining in order.
+static void __cdecl join_sort(uint8_t *join)
+{
+    int n = *(int *)(join + 0xB8);
+    int *pad = (int *)(join + 0xC4);
+    if (n < 2 || n > 4) return;
+    bool moved = false;
+    for (int i = 1; i < n; i++)
+        for (int j = i; j > 0 && pad[j - 1] > pad[j]; j--) {
+            int t = pad[j]; pad[j] = pad[j - 1]; pad[j - 1] = t;
+            moved = true;
+        }
+    if (moved) port_log("versus: players joined out of order - pads sorted to %d %d %d %d\n", pad[0], n > 1 ? pad[1] : -1,
+                        n > 2 ? pad[2] : -1, n > 3 ? pad[3] : -1);
+}
+static __declspec(naked) void join_sort_hook()
+{
+    __asm {
+        pushad
+        push dword ptr [ebp + 0xC4]
+        call join_sort
+        add esp, 4
+        popad
+        mov edx, dword ptr [ebp + 0xC4]                 // displaced instruction
+        ret
+    }
+}
+
 void gn_install(bool netplay)
 {
+    if (expect(0xFD8AB, "8b95c4000000"))                // match start: mov edx, [ebp+0xC4] (the join panel)
+        put_rel(0xFD8AB, 0xE8, join_sort_hook, 6);
     if (!expect(0x1CD5BF, "e89c5dfbff") ||          // call joypad poll 0x183360
         !expect(0xE31A1, "e8dafaffff") ||           // call UnitAI::Update 0xE2C80
         !expect(0xE31C1, "e80ab70a00") ||           // call ticks 0x18E8D0

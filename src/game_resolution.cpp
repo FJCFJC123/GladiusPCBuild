@@ -210,11 +210,52 @@ static void install_viewport_log()
     *(int32_t *)(p + 1) = (int32_t)((DWORD)set_viewport_hook - (0x1BCA50 + 5));
 }
 
+// gfx_SetViewport (0x1BCA50) and gfx_SetScissor (0x1BD090) skip the D3D call when the rect equals the last one,
+// remembered in .data (0x37FFF4.., 0x37FFE4..). A netplay state sync copies the host's .data, so after one the
+// remembered rect can differ from what this machine's D3D has - a menu's full-screen scissor reset is then skipped
+// and the next frames' background stays clipped to the last panel. Always pass the rect on.
+static void install_rect_cache_bypass()
+{
+    BYTE *vp = (BYTE *)0x1BCA68, *sc = (BYTE *)0x1BD0BD;
+    static const BYTE vp_expect[2] = {0x75, 0x18};                          // jne 0x1BCA82 (rect differs)
+    static const BYTE sc_expect[6] = {0x3B, 0x05, 0xE4, 0xFF, 0x37, 0x00};  // cmp eax, [0x37FFE4]
+    if (memcmp(vp, vp_expect, 2) || memcmp(sc, sc_expect, 6)) {
+        port_log("video: viewport / scissor wrappers unexpected - rect cache left on\n");
+        return;
+    }
+    vp[0] = 0xEB;                                       // jmp 0x1BCA82
+    static const BYTE sc_jmp[6] = {0xEB, 0x1E, 0x90, 0x90, 0x90, 0x90};     // jmp 0x1BD0DD
+    memcpy(sc, sc_jmp, 6);
+}
+
+// Camera view-projection (cam+0x180, built in 0x1ABD90; Camera_Project 0x1AC290 and the battle HUD - unit markers
+// 0x8C830, health bars - place things with it): the projection's x / y scales are multiplied by the screen scale
+// sys_SetScreenDimensions (0x1CCD30) keeps at 0x4C96E4 / 0x4C96E0 - (W/H) * 3/4 across on a wide screen. The camera
+// projection is already widened here (Hor+), so that applied the width twice and every marker sat W/H / (4/3) times
+// too far from the centre. Build the matrix from the camera projection as is (both scales 1, as at 640x480).
+static const float k_one = 1.0f;
+static void install_view_projection_scale()
+{
+    struct { DWORD at; const char *code; DWORD old; } ops[] = {
+        {0x1ABF54, "\xF3\x0F\x10\x05", 0x4C96E4},     // movss xmm0, [screen scale x]
+        {0x1ABF62, "\xF3\x0F\x10\x0D", 0x4C96E0},     // movss xmm1, [screen scale y]
+    };
+    for (auto &o : ops)
+        if (memcmp((BYTE *)o.at, o.code, 4) || *(DWORD *)(o.at + 4) != o.old) {
+            port_log("video: camera view-projection code at %06X unexpected - HUD markers keep the screen scale\n", o.at);
+            return;
+        }
+    for (auto &o : ops)
+        *(const float **)(o.at + 4) = &k_one;
+}
+
 // Apply [video] Resolution / UiMode / UiAspect and install the 2D, particle and movie hooks.
 void port_game_resolution(const char *ini)
 {
     install_camera_apply();                             // also at 640x480: a netplay host may run another size
     install_viewport_log();
+    install_rect_cache_bypass();
+    install_view_projection_scale();
     char val[32];
     GetPrivateProfileStringA("video", "Resolution", "640x480", val, sizeof val, ini);
     UINT w, h;
