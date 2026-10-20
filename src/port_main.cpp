@@ -1020,6 +1020,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         port_log("game: %d of %d object pools moved to container memory at %ux capacity (%.2f MB)\n", moved,
                  (int)(sizeof pools / sizeof pools[0]), scale, bytes / 1048576.0);
     }
+    void port_codes_init(const char *ini);              // codes.cpp: [codes] (ported Gecko codes)
+    port_codes_init(ini);
     // [game] UnlockVersus=1: always offer the main menu's "VersuS" item
     if (GetPrivateProfileIntA("game", "UnlockVersus", 0, ini)) {
         WORD *jcc = (WORD *)0xFD5E0;                    // je 0xFD62E (74 4C)

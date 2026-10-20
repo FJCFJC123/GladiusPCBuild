@@ -193,6 +193,12 @@ class Builder:
         set_ini(ini, "game", "UnlockVersus", "1" if self.opt.get("unlock_versus", True) else "0")
         set_ini(ini, "game", "DevMenus", "1" if self.opt.get("dev_menus") else "0")
         set_ini(ini, "game", "UnlockArenas", "1")          # all 15 versus arenas (must match across netplay PCs)
+        codes = self.opt.get("codes")                       # None (CLI without --codes): leave [codes] as it is
+        if codes is not None:
+            on = [k for k, _, _ in CODES if k in codes]
+            for k, _, x in CODES:
+                set_ini(ini, "codes", k, "1" if k in on and not (x in on and CODES_ORDER[x] < CODES_ORDER[k]) else "0")
+            self.log("Codes: " + (", ".join(on) if on else "none"))
         # netplay: game memory at fixed addresses on every PC (needed to join a session)
         set_ini(ini, "mem", "Container", "1")
         set_ini(ini, "mem", "StateSync", "1")
@@ -261,6 +267,22 @@ class Builder:
         self.write_settings()
         (self.out / BUILD_MARKER).write_text("GladiusPort install created by GladiusPort Builder\n")
         self.log(f"Done. Play: {self.out / 'gladius.exe'}")
+
+
+# Gameplay codes ([codes] in gladiusport.ini, src/codes.cpp): ports of the GameCube Gecko codes. (key, label, the key it
+# can't be combined with). They change gameplay, so online players need the same set (part of the netplay version check).
+CODES = [
+    ("ExpandedClasses", "Expanded SkillUseClass table (CustomUnit1-32 classes for ClassDef / Skills .tok)", None),
+    ("Roster40", "40-gladiator school roster", "Unlock20Slots"),
+    ("AnimPool", "Larger animation pool (4000 -> 32000 loaded animations)", None),
+    ("PreserveJP", "Recruits keep the JP their level earned", "InfiniteJP"),
+    ("InfiniteJP", "Infinite JP for recruited gladiators", "PreserveJP"),
+    ("InfiniteMoney", "Infinite money", None),
+    ("PoisonPercent", "Poison deals 10% of max health", None),
+    ("BleedPercent", "Bleeding deals 10% of max health", None),
+    ("Unlock20Slots", "All 20 school slots unlocked from the start", "Roster40"),
+]
+CODES_ORDER = {k: i for i, (k, _, _) in enumerate(CODES)}
 
 
 def set_ini(path, section, key, value):
@@ -431,6 +453,8 @@ def cli(argv):
     ap.add_argument("--preset", choices=("recommended", "low", "medium", "high", "keep"),
                     help="Graphics preset (default: recommended for a new install, keep once one is set)")
     ap.add_argument("--detect", action="store_true", help="Only show the detected hardware and its preset")
+    ap.add_argument("--codes", help="Comma list of gameplay codes to turn on ('none' = all off): "
+                    + ", ".join(k for k, _, _ in CODES))
     a = ap.parse_args(argv)
     if a.detect:
         print("Hardware: " + describe_hardware(detect_hardware()))
@@ -452,6 +476,12 @@ def cli(argv):
     opts = {"dev_menus": not a.no_dev_menus, "unlock_versus": not a.no_unlock_versus, "console": a.console,
             "editor": a.editor, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset,
             "texture_pack": a.texture_pack}
+    if a.codes is not None:
+        codes = [] if a.codes.strip().lower() == "none" else [c.strip() for c in a.codes.split(",") if c.strip()]
+        bad = [c for c in codes if c not in CODES_ORDER]
+        if bad:
+            sys.exit("unknown code(s): " + ", ".join(bad))
+        opts["codes"] = codes
     Builder(a.source, a.out, opts, progress=progress).run(update=a.update)
 
 
@@ -514,24 +544,29 @@ def gui():
         if p:
             v_out.set(p)
 
-    ttk.Label(frm, text="Gladius disc").grid(row=2, column=0, sticky="w")
-    ttk.Entry(frm, textvariable=v_src).grid(row=2, column=1, sticky="ew", padx=6)
-    bsrc = ttk.Frame(frm)
-    bsrc.grid(row=2, column=2)
+    nb = ttk.Notebook(frm)
+    nb.grid(row=2, column=0, columnspan=3, sticky="ew")
+    tab = ttk.Frame(nb, padding=8)
+    tab.columnconfigure(1, weight=1)
+    nb.add(tab, text="Install")
+    ttk.Label(tab, text="Gladius disc").grid(row=0, column=0, sticky="w")
+    ttk.Entry(tab, textvariable=v_src).grid(row=0, column=1, sticky="ew", padx=6)
+    bsrc = ttk.Frame(tab)
+    bsrc.grid(row=0, column=2)
     ttk.Button(bsrc, text="ISO...", command=pick_iso).pack(side="left")
     ttk.Button(bsrc, text="Folder...", command=pick_dir).pack(side="left", padx=(4, 0))
-    ttk.Label(frm, text="Install folder").grid(row=3, column=0, sticky="w", pady=4)
-    ttk.Entry(frm, textvariable=v_out).grid(row=3, column=1, sticky="ew", padx=6)
-    ttk.Button(frm, text="Browse...", command=pick_out).grid(row=3, column=2, sticky="ew")
+    ttk.Label(tab, text="Install folder").grid(row=1, column=0, sticky="w", pady=4)
+    ttk.Entry(tab, textvariable=v_out).grid(row=1, column=1, sticky="ew", padx=6)
+    ttk.Button(tab, text="Browse...", command=pick_out).grid(row=1, column=2, sticky="ew")
 
-    box = ttk.LabelFrame(frm, text="Options", padding=8)
-    box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
+    box = ttk.LabelFrame(tab, text="Options", padding=8)
+    box.grid(row=2, column=0, columnspan=3, sticky="ew", pady=8)
     box.columnconfigure(1, weight=1)
     ttk.Checkbutton(box, text="Versus always available (no story progress needed)", variable=v_vs).grid(
         row=0, column=0, columnspan=2, sticky="w")
     ttk.Checkbutton(box, text="Developer menus (splash school loader, world map Y menu, battle Debug Menu)",
                     variable=v_dev).grid(row=1, column=0, columnspan=2, sticky="w")
-    ttk.Checkbutton(box, text="Console window (troubleshooting)", variable=v_con).grid(row=2, column=0, columnspan=2,
+    ttk.Checkbutton(box, text="Console window (troubleshooting)", variable=v_con).grid(row=0, column=0, columnspan=2,
                                                                                          sticky="w")
     ttk.Checkbutton(box, text="Level editor (gladius_editor.exe: props, meshes, levels, battle grid)",
                     variable=v_edit).grid(row=3, column=0, columnspan=2, sticky="w")
@@ -553,8 +588,37 @@ def gui():
     ttk.Label(box, text="Optional: folder of upscaled <texture name>.png files. Empty = keep the current setting.",
               foreground="#555").grid(row=9, column=0, columnspan=2, sticky="w")
 
+
+    # Codes tab: one box per ported Gecko code; a box whose partner is ticked is greyed out
+    ctab = ttk.Frame(nb, padding=8)
+    nb.add(ctab, text="Codes")
+    ttk.Label(ctab, text="Gameplay codes (ported from the GameCube Gecko codes). Applied on Build or Update exe only.",
+              wraplength=600).grid(row=0, column=0, sticky="w")
+    ttk.Label(ctab, text="Online versus only connects players who use the same codes.", foreground="#555").grid(
+        row=1, column=0, sticky="w", pady=(0, 6))
+    saved_codes = set(settings.get("codes") or [])
+    v_codes, c_boxes = {}, {}
+    labels = {k: lbl for k, lbl, _ in CODES}
+
+    def code_sync(*_):
+        for k, _, x in CODES:
+            if x and v_codes[x].get():
+                v_codes[k].set(False)
+                c_boxes[k].configure(state="disabled", text=f"{labels[k]}  (not with: {labels[x]})")
+            else:
+                c_boxes[k].configure(state="normal", text=labels[k])
+
+    for i, (k, lbl, _) in enumerate(CODES):
+        v_codes[k] = tk.BooleanVar(value=k in saved_codes)
+        c_boxes[k] = ttk.Checkbutton(ctab, text=lbl, variable=v_codes[k], command=code_sync)
+        c_boxes[k].grid(row=2 + i, column=0, sticky="w", pady=1)
+    for k, _, x in CODES:                                   # both saved on: the first in the list wins
+        if x and v_codes[k].get() and v_codes[x].get() and CODES_ORDER[x] > CODES_ORDER[k]:
+            v_codes[x].set(False)
+    code_sync()
+
     bar = ttk.Progressbar(frm, maximum=1000)
-    bar.grid(row=5, column=0, columnspan=3, sticky="ew")
+    bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 0))
     logw = tk.Text(frm, height=12, state="disabled", wrap="word")
     logw.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=8)
     frm.rowconfigure(6, weight=1)
@@ -596,7 +660,8 @@ def gui():
     def opts():
         return {"dev_menus": v_dev.get(), "unlock_versus": v_vs.get(), "console": v_con.get(),
                 "editor": v_edit.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
-                "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip()}
+                "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip(),
+                "codes": [k for k, _, _ in CODES if v_codes[k].get()]}
 
     def save():
         s = {"source": v_src.get(), "out": v_out.get(), **opts()}

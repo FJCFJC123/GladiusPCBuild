@@ -113,7 +113,13 @@ static void *__fastcall pak_hook(void *mgr, void *, const char *name)
     return loose(full.c_str(), "pak") ? nullptr : pak_lookup(mgr, name);
 }
 
-uint32_t port_mods_crc() { return g_crc; }
+// enabled gameplay codes count as mods: netplay pairs only PCs with the same set
+uint32_t port_codes_mask();                             // codes.cpp
+uint32_t port_mods_crc()
+{
+    uint32_t codes = port_codes_mask();
+    return codes ? crc32(&codes, sizeof codes, g_crc) : g_crc;
+}
 
 // Editor: loose files with this extension, sorted.
 void port_mods_list(const char *ext, std::vector<std::string> &out)
