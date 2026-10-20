@@ -177,10 +177,34 @@ static void raise_sound_caps()
              (unsigned)(sizeof g_soundtbs / 0x7C), (unsigned)sizeof g_pltbin, 0x6C00u);
 }
 
+// buildpaks\gamestartup.pak bundles the startup config (items.tok, classdefs.tok, skills.tok.brf / _lines / _strings,
+// prizes.tok, the units\*.idx tables, CurSchool.tok, SwingMeter.tok). The GC data has no such pak and the loaders
+// read each file on their own, so skip it: the mount call (0x1E5D00, one current pak) gets a name that doesn't
+// exist and takes its "no file" return, and the config comes from the loose folder or gladius.bec file by file.
+typedef void(__cdecl *PakMountFn)(const char *name);
+static void __cdecl startup_pak_mount(const char *)
+{
+    ((PakMountFn)0x1E5D00)("$d\\buildpaks\\gamestartup_disabled.pak");
+}
+
+static void skip_startup_pak()
+{
+    const DWORD site = 0x6DA8A;
+    BYTE *p = (BYTE *)site;
+    if (*(BYTE *)0x6DA85 != 0x68 || *(DWORD *)0x6DA86 != 0x343B48 || p[0] != 0xE8 ||
+        site + 5 + *(int32_t *)(p + 1) != 0x1E5D00) {
+        port_log("mods: startup code unexpected - gamestartup.pak still loads\n");
+        return;
+    }
+    *(int32_t *)(p + 1) = (int32_t)((DWORD)startup_pak_mount - (site + 5));
+    port_log("mods: gamestartup.pak skipped - startup config loads file by file\n");
+}
+
 // Scan the loose folder, hash it for netplay and install the lookup hooks.
 void port_mods_init()
 {
     raise_sound_caps();
+    skip_startup_pak();
     std::string root = std::string(port_game_dir()) + "\\data";
     scan(root, "data", g_files);
     if (g_files.empty()) {
