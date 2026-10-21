@@ -51,6 +51,7 @@ GP_API void vh_reconcile();
 // renderer, audio
 GP_API void d3d_textures_all_dirty();
 GP_API void d3d_vb_invalidate_all();
+GP_API void d3d_invalidate_ranges(const uint32_t *pairs, int n);  // (addr, size) pairs a state sync rewrote
 GP_API void dsound_audio_stats(uint32_t out[3]);
 GP_API void dsound_sync_pause(bool on);
 GP_API void dsound_sync_freeze(bool on);

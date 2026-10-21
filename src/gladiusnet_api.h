@@ -4,7 +4,7 @@
 #pragma once
 #include "gn.h"
 
-#define GLADIUSNET_ABI 1                 // bump on any change to GnNetApi or to gp_api.h
+#define GLADIUSNET_ABI 2                 // bump on any change to GnNetApi or to gp_api.h
 
 struct GnNetApi {
     uint32_t abi;                        // GLADIUSNET_ABI

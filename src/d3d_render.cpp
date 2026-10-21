@@ -4,6 +4,7 @@
 #include "d3d.h"
 #include "d3d_prof.h"
 #include <d3dcompiler.h>
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -410,6 +411,52 @@ void d3d_textures_all_dirty()
     InterlockedExchange(&g_all_dirty_req, 1);
 }
 
+// Netplay state sync: only the memory a sync rewrote is stale - re-read just the textures in it (the next lookup;
+// re-reading every texture re-uploaded and re-matched every HD replacement on the frames after each sync).
+static UINT tex_level0_bytes(DWORD format, DWORD size);
+static SRWLOCK g_range_lock = SRWLOCK_INIT;
+static std::vector<std::pair<DWORD, DWORD>> g_dirty_ranges;     // [lo, hi), waiting for the next lookup
+static volatile LONG g_dirty_ranges_req;
+void d3d_vb_invalidate_ranges(const std::vector<std::pair<DWORD, DWORD>> &r);   // d3d_program.cpp
+
+void d3d_invalidate_ranges(const uint32_t *pairs, int n)
+{
+    std::vector<std::pair<DWORD, DWORD>> r;
+    r.reserve(n);
+    for (int i = 0; i < n; i++)
+        if (pairs[2 * i + 1]) r.push_back({pairs[2 * i], pairs[2 * i] + pairs[2 * i + 1]});
+    std::sort(r.begin(), r.end());
+    std::vector<std::pair<DWORD, DWORD>> m;                     // merged
+    for (auto &x : r)
+        if (!m.empty() && x.first <= m.back().second) m.back().second = max(m.back().second, x.second);
+        else m.push_back(x);
+    d3d_vb_invalidate_ranges(m);
+    AcquireSRWLockExclusive(&g_range_lock);
+    g_dirty_ranges.insert(g_dirty_ranges.end(), m.begin(), m.end());
+    ReleaseSRWLockExclusive(&g_range_lock);
+    InterlockedExchange(&g_dirty_ranges_req, 1);
+}
+
+static void apply_dirty_ranges()
+{
+    std::vector<std::pair<DWORD, DWORD>> r;
+    AcquireSRWLockExclusive(&g_range_lock);
+    r.swap(g_dirty_ranges);
+    ReleaseSRWLockExclusive(&g_range_lock);
+    std::sort(r.begin(), r.end());
+    unsigned marked = 0;
+    for (auto &kv : g_tex_cache) {
+        DWORD lo = kv.first.data, hi = lo + tex_level0_bytes(kv.first.format, kv.first.size) * 4 / 3 + 64;   // + mips
+        auto it = std::upper_bound(r.begin(), r.end(), std::make_pair(hi, (DWORD)0));
+        bool hit = false;                                       // ranges are disjoint: only the one starting
+        if (it != r.begin()) hit = (--it)->second > lo;         // last before hi can reach into [lo, hi)
+        if (hit && !kv.second.dirty) kv.second.dirty = true, marked++;
+    }
+    static int logged;
+    if (logged++ < 20)
+        port_log("statesync: %u of %u textures in synced memory re-read\n", marked, (unsigned)g_tex_cache.size());
+}
+
 void d3d_texture_dirty(XPixelContainer *t)
 {
     auto it = g_tex_cache.find({t->Data, t->Format, t->Size});
@@ -622,17 +669,20 @@ static ID3D11ShaderResourceView *upload(XPixelContainer *t)
 
 // Texture by content (Data address, Format, Size), for SetTexture and raw push binds. Texture memory is pooled and
 // reused without a Lock, so once per frame a bound texture's level-0 bytes are sampled against the uploaded content.
-static DWORD tex_sample_sum(DWORD data, DWORD format, DWORD size)
+// bytes of a texture's first level (linear: pitch * height)
+static UINT tex_level0_bytes(DWORD format, DWORD size)
 {
     DWORD fmt = (format >> 8) & 0xFF;
-    UINT bytes;
     if (size)
-        bytes = ((size >> 24) + 1) * 64 * (((size >> 12) & 0xFFF) + 1);
-    else {
-        UINT w = 1u << ((format >> 20) & 0xF), h = 1u << ((format >> 24) & 0xF);
-        bool dxt = fmt == 0x0C || fmt == 0x0E || fmt == 0x0F;
-        bytes = dxt ? ((w + 3) / 4) * ((h + 3) / 4) * (fmt == 0x0C ? 8 : 16) : w * h * d3d_xformat(fmt).bpp / 8;
-    }
+        return ((size >> 24) + 1) * 64 * (((size >> 12) & 0xFFF) + 1);
+    UINT w = 1u << ((format >> 20) & 0xF), h = 1u << ((format >> 24) & 0xF);
+    bool dxt = fmt == 0x0C || fmt == 0x0E || fmt == 0x0F;
+    return dxt ? ((w + 3) / 4) * ((h + 3) / 4) * (fmt == 0x0C ? 8 : 16) : w * h * d3d_xformat(fmt).bpp / 8;
+}
+
+static DWORD tex_sample_sum(DWORD data, DWORD format, DWORD size)
+{
+    UINT bytes = tex_level0_bytes(format, size);
     const DWORD *p = (const DWORD *)data;
     UINT n = bytes / 4;
     if (!n)
@@ -741,6 +791,8 @@ ID3D11ShaderResourceView *d3d_texture_srv(DWORD data, DWORD format, DWORD size)
     if (g_all_dirty_req && InterlockedExchange(&g_all_dirty_req, 0))
         for (auto &kv : g_tex_cache)
             kv.second.dirty = true;
+    if (g_dirty_ranges_req && InterlockedExchange(&g_dirty_ranges_req, 0))
+        apply_dirty_ranges();
     TexEntry &e = g_tex_cache[{data, format, size}];
     if (e.srv && !e.dirty) {
         if (e.checked_frame == g_d3d.frame)

@@ -432,6 +432,24 @@ void d3d_vb_invalidate_all()
             k.frame = 0xFFFFFFFF, k.len = 0;
 }
 
+// Netplay state sync rewrote these [lo, hi) ranges (sorted, disjoint): their chunks are re-verified on next use
+// (hashed, uploaded only if the bytes changed) - no blanket re-upload of every stream.
+void d3d_vb_invalidate_ranges(const std::vector<std::pair<DWORD, DWORD>> &r)
+{
+    if (r.empty())
+        return;
+    D3DLock lock;
+    for (auto &kv : g_vb_cache) {
+        DWORD base = kv.first;
+        for (size_t c = 0; c < kv.second.chunks.size(); c++) {
+            DWORD lo = base + (DWORD)c * VB_CHUNK, hi = lo + VB_CHUNK;
+            auto it = std::upper_bound(r.begin(), r.end(), std::make_pair(hi, (DWORD)0));
+            if (it != r.begin() && (--it)->second > lo)
+                kv.second.chunks[c].frame = 0xFFFFFFFF;
+        }
+    }
+}
+
 // The game locked a vertex buffer for writing: drop its chunks' verified state.
 void d3d_vb_invalidate(DWORD data)
 {
