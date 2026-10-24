@@ -10,7 +10,9 @@ extern void (*port_readex_notify)(void *dest, DWORD n);   // xapi_file.cpp
 void port_memwatch_set(int slot, uint32_t addr);          // port_main.cpp: DR2/DR3 write watches
 uint32_t port_memwatch_get(int slot);
 void port_write_dump(const char *why);                    // port_main.cpp: full-memory minidump, once per reason
-extern volatile DWORD g_port_probe_tid;                   // port_main.cpp: thread doing a guarded read
+extern volatile DWORD g_port_probe_tid;
+extern bool port_smallheap_installed;                     // smallheap.cpp owns the SmallHeap Free entry: it calls us
+extern void(__cdecl *port_pool_free_notify)(uint32_t p);                   // port_main.cpp: thread doing a guarded read
 
 namespace pkgdiag {
 
@@ -362,7 +364,8 @@ void install()
     patch(0x1EF3E0, "558bec83e4f0", draw_hook);
     patch(0x1E6410, "6aff68fb8d2900", destroy_hook);
     patch(0x176A30, "8b44240485c0", heap_free_hook);
-    patch(0x176360, "8b54240453", pool_free_hook);
+    if (port_smallheap_installed) port_pool_free_notify = on_pool_free;
+    else patch(0x176360, "8b54240453", pool_free_hook);
     port_readex_notify = read_executing;
 }
 

@@ -11,6 +11,9 @@
 static const DWORD k_alloc = 0x1759C0, k_free = 0x176360;
 static const DWORD k_overflow_tag = 0x0F10F10F;          // header word in front of an overflow block
 
+bool port_smallheap_installed;
+void(__cdecl *port_pool_free_notify)(uint32_t p);       // pkgdiag.cpp: sees every Free (it used to patch Free itself)
+
 static volatile LONG g_overflow_blocks;
 static const void *g_logged[128];                        // heaps already reported (log once each)
 static volatile LONG g_logged_n;
@@ -65,6 +68,7 @@ static void *__fastcall alloc_hook(void *heap, void *edx, DWORD size)
 
 static void __fastcall free_hook(void *heap, void *edx, void *p)
 {
+    if (port_pool_free_notify) port_pool_free_notify((uint32_t)(uintptr_t)p);
     BYTE *base = *(BYTE **)((BYTE *)heap + 0x64), *end = base + *(DWORD *)((BYTE *)heap + 0x6C) * 4;
     if (p && ((BYTE *)p < base || (BYTE *)p >= end)) {
         DWORD *b = (DWORD *)p - 1;
@@ -100,5 +104,6 @@ extern "C" void port_smallheap_init()
     }
     hook(k_free, (void *)free_hook, free_head, sizeof free_head);
     hook(k_alloc, (void *)alloc_hook, alloc_head, sizeof alloc_head);
+    port_smallheap_installed = true;
     port_log("smallheap: overflow into the game heap installed\n");
 }
