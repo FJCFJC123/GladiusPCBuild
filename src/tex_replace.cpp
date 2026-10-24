@@ -4,7 +4,15 @@
 // checks it is the same picture as the Xbox texture, rebuilds any padding, builds mips and creates the D3D11 texture.
 // The game thread never waits: the original shows until the HD one is ready. Swizzled textures only (linear ones
 // address texels in pixels).
+//
+// Button prompts: the HUD and menus draw button_xbox_*.tga (loose files and the battle HUD bundle
+// battlehud_interfaceGUI_swingmeter.ptx). While a PlayStation or Nintendo controller is the one in use, those draws
+// show gladius.bec's PS2 (button_ps2_*) / GameCube (button_cube_*) prompts, fitted into the Xbox prompt's image area.
+// Render side only - game memory (synced in netplay) is untouched. [input] ButtonPrompts = auto (the controller
+// pressed last) / xbox / playstation / nintendo.
 #include "d3d.h"
+#include "input_sdl.h"
+#include <cmath>
 #include <wincodec.h>
 #include <deque>
 #include <map>
@@ -38,6 +46,37 @@ static char g_pack[MAX_PATH];
 static bool g_enabled, g_same_size;
 static int g_max_diff;
 static unsigned g_hits, g_misses;
+
+bool port_read_game_file(const std::string &key, std::string &out);   // bec_read.cpp
+void d3d_texture_dirty(XPixelContainer *t);                            // d3d_render.cpp
+
+// Xbox prompt -> PS2 / GameCube file suffix. LB / RB are white / black, LT / RT the Xbox L / R.
+struct Prompt { const char *xbox, *alt[2]; };
+static const Prompt g_prompts[] = {
+    {"a", {"x", "a"}},           {"b", {"c", "b"}},           {"x", {"s", "x"}},         {"y", {"t", "y"}},
+    {"l", {"l2", "l"}},          {"r", {"r2", "r"}},          {"white", {"l1", "z"}},    {"black", {"r1", "z"}},
+    {"start", {"start", "start"}}, {"analog", {"analog", "analog"}}, {"analogl", {"analogl", "analogl"}},
+    {"analogr", {"analogr", "analogr"}}, {"analogd", {"analogd", "analog"}},
+};
+enum { NPROMPTS = sizeof g_prompts / sizeof g_prompts[0] };
+struct AltImage { std::vector<DWORD> px; UINT w, h; };          // decoded BGRA, image area only
+static AltImage g_alt[NPROMPTS][2];                              // written once by the loader, then read-only
+static volatile LONG g_alt_ready;
+static int g_prompt_mode = -1;                                   // -1 auto, else forced style
+static int g_prompt_applied;                                     // style the texture cache was last switched to
+static std::map<DWORD, std::pair<DWORD, int>> g_prompt_tex;      // Xbox prompt Data -> (Format, prompt index)
+static std::map<int, ID3D11ShaderResourceView *> g_prompt_srv;   // prompt index * 3 + style -> fitted image
+
+static int prompt_index(const std::string &key)
+{
+    if (key.compare(0, 12, "button_xbox_"))
+        return -1;
+    for (int i = 0; i < NPROMPTS; i++)
+        if (key.compare(12, std::string::npos, g_prompts[i].xbox) == 0)
+            return i;
+    return -1;
+}
+
 
 // pack lookup key: lower case, extensions stripped - "MAIN1" (bundle entry), "$t\gui\cursor.tga" (loose file) and
 // "main1.tga.png" (pack file) all meet as "main1"
@@ -112,6 +151,11 @@ static void note_bitmap(void *bitmap)                           // bitmap built:
                  *(const WORD *)(b + 0x1A)};
     EnterCriticalSection(&g_cs);
     g_names[t->Data] = r;
+    int pi = prompt_index(r.key);
+    if (pi >= 0)
+        g_prompt_tex[t->Data] = {t->Format, pi};
+    else
+        g_prompt_tex.erase(t->Data);
     InterlockedIncrement(&g_tex_names_gen);
     if (g_enabled)
         request(r, t->Data);
@@ -256,6 +300,98 @@ static ID3D11ShaderResourceView *make_srv(std::vector<BYTE> &px, UINT w, UINT h)
     return srv;
 }
 
+// One gladius.bec prompt texture (PTTP: PFHD +0x11 'A'/'B'/'C' = DXT1/3/5, +0x18 image w, h; PTDT +0x10 level 0).
+static bool load_alt(const char *file, AltImage &out)
+{
+    std::string d;
+    if (!port_read_game_file(std::string("data/texture/buttons/") + file + ".tga", d) || d.size() < 16 ||
+        d.compare(0, 4, "PTTP"))
+        return false;
+    const BYTE *hd = nullptr, *px = nullptr;
+    DWORD pxsize = 0;
+    for (size_t at = 16; at + 16 <= d.size();) {
+        const BYTE *c = (const BYTE *)d.data() + at;
+        DWORD len = *(const DWORD *)(c + 4);
+        if (len < 16 || at + len > d.size())
+            break;
+        if (!memcmp(c, "PFHD", 4) && len >= 0x20) hd = c;
+        if (!memcmp(c, "PTDT", 4)) px = c + 16, pxsize = len - 16;
+        at += len;
+    }
+    if (!hd || !px)
+        return false;
+    DWORD fmt = hd[0x11] == 'A' ? 0x0C : hd[0x11] == 'B' ? 0x0E : hd[0x11] == 'C' ? 0x0F : 0;
+    UINT iw = *(const WORD *)(hd + 0x18), ih = *(const WORD *)(hd + 0x1A);
+    UINT lw = 0, lh = 0;                                         // texture size: powers of two around the image
+    while ((1u << lw) < iw) lw++;
+    while ((1u << lh) < ih) lh++;
+    UINT tw = 1u << lw, th = 1u << lh;
+    if (!fmt || !iw || !ih || pxsize < tw * th / (fmt == 0x0C ? 2 : 1))
+        return false;
+    std::vector<BYTE> copy(px, px + pxsize);                     // d3d_texel reads game-style memory
+    DWORD format = fmt << 8 | 1u << 16 | lw << 20 | lh << 24;
+    out.w = iw, out.h = ih;
+    out.px.resize((size_t)iw * ih);
+    for (UINT y = 0; y < ih; y++)
+        for (UINT x = 0; x < iw; x++)
+            out.px[(size_t)y * iw + x] = d3d_texel((DWORD)copy.data(), format, x, y);
+    return true;
+}
+
+static DWORD WINAPI prompt_loader(void *)
+{
+    unsigned n = 0;
+    for (int i = 0; i < NPROMPTS; i++)
+        for (int s = 0; s < 2; s++) {
+            char name[64];
+            _snprintf(name, sizeof name, "button_%s_%s", s ? "cube" : "ps2", g_prompts[i].alt[s]);
+            n += load_alt(name, g_alt[i][s]);
+        }
+    port_log("prompts: %u PS2 / GameCube button images loaded\n", n);
+    InterlockedExchange(&g_alt_ready, 1);
+    return 0;
+}
+
+// Fit an alternate prompt into the Xbox texture's image area (aspect kept, centred, bilinear), as a texture of the
+// Xbox texture's size so the game's texture coordinates still land on it.
+static ID3D11ShaderResourceView *fit_prompt(const AltImage &a, const NameRec &r)
+{
+    UINT tw, th, rw, rh;
+    tex_dims(r.format, &tw, &th);
+    image_area(r, &rw, &rh);
+    float s = min((float)rw / a.w, (float)rh / a.h);
+    float ox = (rw - a.w * s) / 2, oy = (rh - a.h * s) / 2;
+    auto at = [&](int x, int y, float c[4]) {                    // premultiplied texel, transparent outside
+        if (x < 0 || y < 0 || x >= (int)a.w || y >= (int)a.h) { c[0] = c[1] = c[2] = c[3] = 0; return; }
+        DWORD p = a.px[(size_t)y * a.w + x];
+        float al = (p >> 24) / 255.0f;
+        c[0] = (p & 0xFF) * al, c[1] = ((p >> 8) & 0xFF) * al, c[2] = ((p >> 16) & 0xFF) * al, c[3] = al;
+    };
+    std::vector<BYTE> px((size_t)tw * th * 4, 0);
+    for (UINT y = 0; y < rh; y++)
+        for (UINT x = 0; x < rw; x++) {
+            float u = (x + 0.5f - ox) / s - 0.5f, v = (y + 0.5f - oy) / s - 0.5f;
+            int x0 = (int)floorf(u), y0 = (int)floorf(v);
+            float fx = u - x0, fy = v - y0, c[4] = {}, t[4];
+            const float wgt[4] = {(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy};
+            for (int k = 0; k < 4; k++) {
+                at(x0 + (k & 1), y0 + (k >> 1), t);
+                for (int ch = 0; ch < 4; ch++) c[ch] += t[ch] * wgt[k];
+            }
+            BYTE *o = &px[((size_t)y * tw + x) * 4];
+            if (c[3] > 0.002f)
+                for (int ch = 0; ch < 3; ch++) o[ch] = (BYTE)min(255.0f, c[ch] / c[3] + 0.5f);
+            o[3] = (BYTE)min(255.0f, c[3] * 255 + 0.5f);
+        }
+    return make_srv(px, tw, th);
+}
+
+static int prompt_style_now()
+{
+    if (!g_alt_ready)
+        return 0;
+    return g_prompt_mode >= 0 ? g_prompt_mode : sdl_prompt_style();
+}
 static ID3D11ShaderResourceView *load_job(IWICImagingFactory *wic, const Job &j)
 {
     const NameRec &r = j.r;
@@ -334,9 +470,56 @@ std::string tex_key(DWORD data, DWORD format)
     return k;
 }
 
+// Button prompts: once per texture lookup (d3d_texture_srv, D3D lock held) - when the prompt style changed, the
+// cached Xbox prompt textures are re-read, which brings them back through tex_replace_srv.
+void tex_prompts_poll()
+{
+    int want = prompt_style_now();
+    if (want == g_prompt_applied)
+        return;
+    static const char *const styles[] = {"Xbox", "PlayStation", "Nintendo"};
+    static int logged;
+    if (logged++ < 40)
+        port_log("prompts: %s button prompts\n", styles[want]);
+    g_prompt_applied = want;
+    EnterCriticalSection(&g_cs);
+    for (auto &kv : g_prompt_tex) {
+        XPixelContainer t = {};
+        t.Data = kv.first, t.Format = kv.second.first;
+        d3d_texture_dirty(&t);
+    }
+    LeaveCriticalSection(&g_cs);
+}
+
+static ID3D11ShaderResourceView *prompt_srv(DWORD data, DWORD format)
+{
+    int style = g_prompt_applied;
+    if (!style)
+        return nullptr;
+    ID3D11ShaderResourceView *srv = nullptr;
+    EnterCriticalSection(&g_cs);
+    auto pt = g_prompt_tex.find(data);
+    auto it = g_names.find(data);
+    if (pt != g_prompt_tex.end() && pt->second.first == format && it != g_names.end() &&
+        it->second.format == format && it->second.sum == d3d_tex_sample_sum(data, format, 0)) {
+        int pi = pt->second.second;
+        const AltImage &a = g_alt[pi][style - 1];
+        auto c = g_prompt_srv.find(pi * 3 + style);
+        if (c == g_prompt_srv.end())
+            c = g_prompt_srv.emplace(pi * 3 + style, a.px.empty() ? nullptr : fit_prompt(a, it->second)).first;
+        if ((srv = c->second) != nullptr)
+            srv->AddRef();
+    }
+    LeaveCriticalSection(&g_cs);
+    return srv;
+}
+
 ID3D11ShaderResourceView *tex_replace_srv(DWORD data, DWORD format, DWORD size, bool *pending)
 {
     *pending = false;
+    if (!size)
+        if (ID3D11ShaderResourceView *p = prompt_srv(data, format))
+            return p;
     if (!g_enabled || !g_d3d.hd_textures || size)
         return nullptr;
     ID3D11ShaderResourceView *srv = nullptr;
@@ -376,6 +559,10 @@ void port_tex_replace_init(const char *ini)
     redirect(0x1EC9C9, 0x1EC250, (void *)build_from_pttp);
     redirect(0x1797A8, 0x1EC600, (void *)build_from_entry);
     char val[MAX_PATH];
+    GetPrivateProfileStringA("input", "ButtonPrompts", "auto", val, sizeof val, ini);
+    g_prompt_mode = !_stricmp(val, "xbox") ? 0 : !_stricmp(val, "playstation") ? 1 : !_stricmp(val, "nintendo") ? 2 : -1;
+    if (g_prompt_mode)                                          // PS2 / GameCube prompt images, in the background
+        CloseHandle(CreateThread(nullptr, 0, prompt_loader, nullptr, 0, nullptr));
     GetPrivateProfileStringA("textures", "Pack", "", val, sizeof val, ini);
     if (!val[0])
         return;

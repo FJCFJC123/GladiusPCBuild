@@ -781,11 +781,14 @@ static void tex_dump_dds(DWORD data, DWORD format)
     fclose(f);
 }
 
+void tex_prompts_poll();                                        // tex_replace.cpp: button prompt style changes
+
 ID3D11ShaderResourceView *d3d_texture_srv(DWORD data, DWORD format, DWORD size)
 {
     if (!data)
         return nullptr;
     ProfScope pz(PZ_TEXTURE);
+    tex_prompts_poll();
     if (d3d_tracing() && !size)
         tex_dump_dds(data, format);
     if (g_all_dirty_req && InterlockedExchange(&g_all_dirty_req, 0))

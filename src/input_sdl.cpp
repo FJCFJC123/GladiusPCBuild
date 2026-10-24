@@ -22,6 +22,7 @@ typedef int(__cdecl *SDL_JoystickGetDeviceInstanceID_t)(int);
 typedef void *(__cdecl *SDL_GameControllerGetJoystick_t)(void *);
 typedef int(__cdecl *SDL_JoystickInstanceID_t)(void *);
 typedef const char *(__cdecl *SDL_GetError_t)(void);
+typedef int(__cdecl *SDL_GameControllerGetType_t)(void *);
 
 static struct {
     SDL_Init_t Init;
@@ -41,6 +42,7 @@ static struct {
     SDL_GameControllerGetJoystick_t GetJoystick;
     SDL_JoystickInstanceID_t InstanceID;
     SDL_GetError_t GetError;
+    SDL_GameControllerGetType_t GetType;                 // SDL 2.0.12+ (optional)
 } sdl;
 
 enum { SDL_INIT_JOYSTICK = 0x200, SDL_INIT_GAMECONTROLLER = 0x2000, SDL_INIT_EVENTS = 0x4000 };
@@ -56,11 +58,13 @@ struct Player {
     WORD sent_lo, sent_hi;
     DWORD rumble_tick;
     bool active;                                         // first input logged
+    int style;                                           // button prompts: 0 Xbox, 1 PlayStation, 2 Nintendo
 };
 static Player g_players[4];
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static volatile LONG g_count;
 static bool g_ok;
+static volatile LONG g_last_style = -1;                  // prompt style of the controller used last (-1 none yet)
 
 // Skipped devices: [input] IgnoreControllers=name;name (substrings), plus DS4Windows' virtual "Xbox 360 Controller"
 // copy of a PlayStation pad while the real pad is visible ([input] SkipDS4WindowsMirror=0 keeps it).
@@ -83,6 +87,23 @@ static bool is_playstation(const char *name)
 {
     return name_has(name, "PS3") || name_has(name, "PS4") || name_has(name, "PS5") || name_has(name, "DualSense") ||
            name_has(name, "DualShock") || name_has(name, "Sony");
+}
+
+static int prompt_style(void *gc)
+{
+    enum { PS3 = 3, PS4 = 4, SWITCH_PRO = 5, PS5 = 7, JOYCON_L = 11, JOYCON_R = 12, JOYCON_PAIR = 13 };
+    int t = sdl.GetType ? sdl.GetType(gc) : 0;
+    if (t == PS3 || t == PS4 || t == PS5)
+        return 1;
+    if (t == SWITCH_PRO || t == JOYCON_L || t == JOYCON_R || t == JOYCON_PAIR)
+        return 2;
+    const char *name = sdl.Name(gc);
+    if (is_playstation(name))
+        return 1;
+    if (name_has(name, "Nintendo") || name_has(name, "Switch") || name_has(name, "Joy-Con") ||
+        name_has(name, "GameCube") || name_has(name, "Pro Controller"))
+        return 2;
+    return 0;
 }
 
 // Is DS4Windows running? (checked at most every 2 s)
@@ -170,8 +191,12 @@ static void open_new()
             p = {};
             p.gc = gc;
             p.instance = sdl.InstanceID(sdl.GetJoystick(gc));
+            p.style = prompt_style(gc);
             ReleaseSRWLockExclusive(&g_lock);
-            port_log("input: player %d = %s (SDL)\n", slot + 1, sdl.Name(gc) ? sdl.Name(gc) : "controller");
+            InterlockedCompareExchange(&g_last_style, p.style, -1);
+            static const char *const styles[] = {"Xbox", "PlayStation", "Nintendo"};
+            port_log("input: player %d = %s (SDL, %s button prompts)\n", slot + 1, sdl.Name(gc) ? sdl.Name(gc) : "controller",
+                     styles[p.style]);
             break;
         }
     }
@@ -210,6 +235,12 @@ static void poll()
         int lt = sdl.GetAxis(p.gc, AX_LT), rt = sdl.GetAxis(p.gc, AX_RT);   // 0..32767
         s.bLeftTrigger = (BYTE)(lt > 0 ? lt * 255 / 32767 : 0);
         s.bRightTrigger = (BYTE)(rt > 0 ? rt * 255 / 32767 : 0);
+        // the controller pressed last picks the button prompts (tex_replace.cpp)
+        bool used = (s.wButtons & ~p.state.wButtons) || (s.bLeftTrigger > 64 && p.state.bLeftTrigger <= 64) ||
+                    (s.bRightTrigger > 64 && p.state.bRightTrigger <= 64) || (s.sThumbLX > 16000 || s.sThumbLX < -16000) ||
+                    s.sThumbLY > 16000 || s.sThumbLY < -16000;
+        if (used && g_last_style != p.style)
+            InterlockedExchange(&g_last_style, p.style);
         AcquireSRWLockExclusive(&g_lock);
         p.state = s;
         if (!p.active && (s.wButtons || s.bLeftTrigger > 64 || s.bRightTrigger > 64)) {
@@ -294,6 +325,7 @@ bool sdl_input_start()
     LOAD(DeviceInstanceID, "SDL_JoystickGetDeviceInstanceID");
     LOAD(GetJoystick, "SDL_GameControllerGetJoystick");
     LOAD(InstanceID, "SDL_JoystickInstanceID");
+    LOAD(GetType, "SDL_GameControllerGetType");
     LOAD(GetError, "SDL_GetError");
 #undef LOAD
     if (!sdl.Init || !sdl.SetHint || !sdl.PumpEvents || !sdl.NumJoysticks || !sdl.IsGameController || !sdl.Open ||
@@ -308,6 +340,12 @@ bool sdl_input_start()
 }
 
 int sdl_player_count() { return g_ok ? (int)g_count : 0; }
+
+int sdl_prompt_style()
+{
+    LONG s = g_last_style;
+    return g_ok && s > 0 ? (int)s : 0;
+}
 
 bool sdl_read(int player, PadState *out)
 {
