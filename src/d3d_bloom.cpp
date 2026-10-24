@@ -18,6 +18,14 @@ static ID3D11RenderTargetView *g_sky_rtv;
 static float g_sun_u, g_sun_v;                          // visible sun on screen (from the sky map, 2 frames old)
 static float g_sun_fade;                                // rays shown 0..1 (fades, no switching)
 static bool g_sun_seen;                                 // the last read sky map had a sun
+// The sun is tracked as a world direction: each sky map in the readback ring keeps the camera it was drawn with, the
+// 2-frame-old find goes back to a direction through that camera, and the rays are placed with this frame's camera.
+// In screen space the centre lagged the camera by the readback and jumped as the camera pivoted (rays bouncing in
+// the Theatre Antiquitis intro, 2026-10-21). The sky is at infinity, so only the camera's rotation matters.
+static float g_ring_P[SKY_RING][16], g_ring_R[SKY_RING][16];
+static bool g_ring_cam[SKY_RING];
+static float g_sun_dir[3];                              // world, unit
+static bool g_sun_dir_ok;
 static ID3D11Buffer *g_cb;
 static ID3D11SamplerState *g_lin;
 static ID3D11BlendState *g_bs_copy, *g_bs_add;
@@ -222,6 +230,42 @@ static bool init()
     return true;
 }
 
+// screen uv -> world direction through camera P (projection), R (world -> view), both row-major for column vectors
+static bool uv_to_world(const float P[16], const float R[16], float u, float v, float out[3])
+{
+    if (fabsf(P[0]) < 1e-6f || fabsf(P[5]) < 1e-6f || fabsf(P[14]) < 1e-6f)
+        return false;
+    float nx = u * 2 - 1, ny = 1 - v * 2;
+    float z = P[14] > 0 ? 1.0f : -1.0f;                 // in front: clip w = P[14] * z > 0
+    float w = P[14] * z;
+    float d[3] = {(nx * w - P[2] * z) / P[0], (ny * w - P[6] * z) / P[5], z};
+    float l = 0;
+    for (int k = 0; k < 3; k++) {
+        out[k] = R[k] * d[0] + R[4 + k] * d[1] + R[8 + k] * d[2];   // R^T: view -> world
+        l += out[k] * out[k];
+    }
+    if (l < 1e-12f)
+        return false;
+    l = 1 / sqrtf(l);
+    for (int k = 0; k < 3; k++)
+        out[k] *= l;
+    return true;
+}
+
+// world direction -> screen uv through camera P, R; false when it is behind the camera
+static bool world_to_uv(const float P[16], const float R[16], const float d[3], float *u, float *v)
+{
+    float e[3];
+    for (int k = 0; k < 3; k++)
+        e[k] = R[k * 4] * d[0] + R[k * 4 + 1] * d[1] + R[k * 4 + 2] * d[2];
+    float cx = P[0] * e[0] + P[1] * e[1] + P[2] * e[2], cy = P[4] * e[0] + P[5] * e[1] + P[6] * e[2];
+    float cw = P[12] * e[0] + P[13] * e[1] + P[14] * e[2];
+    if (cw < 1e-4f)
+        return false;
+    *u = cx / cw * 0.5f + 0.5f, *v = 0.5f - cy / cw * 0.5f;
+    return true;
+}
+
 // Find the visible sun in the picture: sky brightness per cell of a 64 x 36 map, read back two frames later (no
 // stall). A sun is one spot clearly brighter than the rest of the sky; its position is the weighted centre of the
 // brightest cells.
@@ -244,8 +288,10 @@ static void find_sun(ID3D11ShaderResourceView *scene)
     ctx->OMSetRenderTargets(1, &no_rt, nullptr);
     DWORD f = g_d3d.frame;
     ctx->CopyResource(g_sky_read[f % SKY_RING], g_sky);
+    g_ring_cam[f % SKY_RING] = d3d_camera_this_frame(g_ring_P[f % SKY_RING], g_ring_R[f % SKY_RING]);
+    const int os = (f + 1) % SKY_RING;
     D3D11_MAPPED_SUBRESOURCE m;
-    ID3D11Texture2D *old = g_sky_read[(f + 1) % SKY_RING];   // written two frames ago
+    ID3D11Texture2D *old = g_sky_read[os];              // written two frames ago
     if (f < 2 || FAILED(ctx->Map(old, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m)))
         return;
     auto half = [](unsigned short h) {                  // float16 -> float
@@ -287,6 +333,26 @@ static void find_sun(ID3D11ShaderResourceView *scene)
         return;
     }
     float nu = u / wsum, nv = v / wsum;
+    float dir[3];
+    if (g_ring_cam[os] && uv_to_world(g_ring_P[os], g_ring_R[os], nu, nv, dir)) {
+        float dot = dir[0] * g_sun_dir[0] + dir[1] * g_sun_dir[1] + dir[2] * g_sun_dir[2];
+        if (!g_sun_dir_ok || g_sun_fade <= 0 || dot < 0.99f) {     // new sun (> ~8 degrees away): take it as it is
+            memcpy(g_sun_dir, dir, sizeof g_sun_dir);
+        } else {                                        // the same sun: average out the 64 x 36 grid and what
+            float l = 0;                                // geometry in front of it hides as the camera turns
+            for (int k = 0; k < 3; k++) {
+                g_sun_dir[k] += (dir[k] - g_sun_dir[k]) * 0.1f;
+                l += g_sun_dir[k] * g_sun_dir[k];
+            }
+            l = 1 / sqrtf(l);
+            for (int k = 0; k < 3; k++)
+                g_sun_dir[k] *= l;
+        }
+        g_sun_dir_ok = true;
+        g_sun_seen = true;
+        return;
+    }
+    g_sun_dir_ok = false;                               // no camera: screen space, as found
     if (g_sun_fade <= 0 || fabsf(nu - g_sun_u) + fabsf(nv - g_sun_v) > 0.3f)
         g_sun_u = nu, g_sun_v = nv;                     // new sun: take it as it is
     else                                                // smooth out the 64 x 36 grid steps
@@ -334,6 +400,14 @@ ID3D11ShaderResourceView *d3d_bloom_run(ID3D11ShaderResourceView *scene, UINT w,
         pass(g_ps_up, g_srv[k], g_w[k], g_h[k], k - 1, g_bs_add);
     if (g_d3d.god_rays > 0 && g_d3d.gbuf_srv && g_sky_rtv) {
         find_sun(scene);                                // fades in over ~12 frames, out over ~20
+        float P[16], R[16];
+        if (g_sun_dir_ok && d3d_camera_this_frame(P, R)) {
+            float u, v;                                 // the tracked sun through this frame's camera
+            if (world_to_uv(P, R, g_sun_dir, &u, &v))
+                g_sun_u = u, g_sun_v = v;
+            else
+                g_sun_seen = false;                     // turned away: fade out
+        }
         g_sun_fade += g_sun_seen ? 0.08f : -0.05f;
         g_sun_fade = g_sun_fade < 0 ? 0 : g_sun_fade > 1 ? 1 : g_sun_fade;
     }
