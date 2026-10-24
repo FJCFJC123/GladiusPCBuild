@@ -80,6 +80,33 @@ static bool loose(const char *name, const char *site)
     return true;
 }
 
+// Pre-tokenized copies of a .tok: X.tok.brf + X_lines.bin + X_strings.bin (skills: the loader 0xB7390 uses them when
+// 0xB5DE0 finds X.tok.brf and otherwise tokenizes X.tok itself). With a loose X.tok they count as missing, from the
+// bec and the loose folder alike, so the text is what loads and mods need only the .tok.
+static bool tok_shadowed(const char *name)
+{
+    if (!name) return false;
+    std::string k = key_of(name), base;
+    auto ends = [&](const char *s) {
+        size_t n = strlen(s);
+        return k.size() > n && !k.compare(k.size() - n, n, s);
+    };
+    if (ends(".tok.brf")) base = k.substr(0, k.size() - 4);
+    else if (ends("_lines.bin")) base = k.substr(0, k.size() - 10) + ".tok";
+    else if (ends("_strings.bin")) base = k.substr(0, k.size() - 12) + ".tok";
+    else return false;
+    AcquireSRWLockShared(&g_files_lock);
+    bool have = g_files.count(base) != 0;
+    ReleaseSRWLockShared(&g_files_lock);
+    if (have) {
+        AcquireSRWLockExclusive(&g_used_lock);
+        bool first = g_used.insert(k + "|shadowed").second;
+        ReleaseSRWLockExclusive(&g_used_lock);
+        if (first) port_log("mods: %s ignored - loose %s loads as text\n", k.c_str(), base.c_str());
+    }
+    return have;
+}
+
 typedef void *(__thiscall *BecLookup)(void *mgr, const char *name, uint32_t *size);
 static const BecLookup bec_lookup = (BecLookup)0x1FA680;
 
@@ -88,12 +115,14 @@ void port_editor_note_file(const char *name);         // editor.cpp: the level's
 static void *__fastcall lookup_hook(void *mgr, void *, const char *name, uint32_t *size)
 {
     port_editor_note_file(name);
+    if (tok_shadowed(name)) return nullptr;
     return loose(name, "open") ? nullptr : bec_lookup(mgr, name, size);
 }
 
-// File-exists check: loose files count as present.
+// File-exists check: loose files count as present, shadowed .tok binaries as absent.
 static void *__fastcall exists_hook(void *mgr, void *, const char *name, uint32_t *size)
 {
+    if (tok_shadowed(name)) return nullptr;
     return loose(name, "exists") ? (void *)1 : bec_lookup(mgr, name, size);
 }
 
@@ -110,6 +139,7 @@ static void *__fastcall pak_hook(void *mgr, void *, const char *name)
         const char *base = c == 'd' ? "data" : c == 'l' ? "data\\levels" : c == 't' ? "data\\texture" : nullptr;
         if (base) full = base + full.substr(2);
     }
+    if (tok_shadowed(full.c_str())) return nullptr;
     return loose(full.c_str(), "pak") ? nullptr : pak_lookup(mgr, name);
 }
 
