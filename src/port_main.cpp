@@ -947,6 +947,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
             {0x29C8D5, 0x1E000, "anim_XRotNames"},        {0x29C980, 0xC000, "fxnames"},
             {0x29CA60, 0x1000, "TintSetStringBuffer"},    {0x29D6E5, 0x1000, "PaxName"},
             {0x29D735, 0x4000, "MeshLoader"},             {0x29D790, 0xBB8, "PaxConfigStrings"},
+            {0x0B2CF0, 0xABE0, "SkillDataFFHeap"},        // skill name table: 24 bytes a skill, full at 1833
         };
         const DWORD ceiling = 0x1FFF0;
         int raised = 0;
@@ -1020,6 +1021,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         port_log("game: %d of %d object pools moved to container memory at %ux capacity (%.2f MB)\n", moved,
                  (int)(sizeof pools / sizeof pools[0]), scale, bytes / 1048576.0);
     }
+    void port_smallheap_init();                         // smallheap.cpp: full SmallHeaps grow into the game heap
+    port_smallheap_init();
     void port_codes_init(const char *ini);              // codes.cpp: [codes] (ported Gecko codes)
     port_codes_init(ini);
     // [game] UnlockVersus=1: always offer the main menu's "VersuS" item
@@ -1085,7 +1088,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         if (*(DWORD *)rs == 0x0424448B && rs[4] == 0xA3 && *(DWORD *)(rs + 5) == 0x38E43C) {
             rs[0] = 0xE9;
             *(int32_t *)(rs + 1) = (int32_t)((DWORD)port_request_state - (0x1EF40 + 5));
-            g_dev_splash_pending = !strstr(GetCommandLineA(), "-gnauto=");   // autotest boots to the main menu
+            g_dev_splash_pending = !strstr(GetCommandLineA(), "-gnauto=") ||   // autotest boots to the main menu,
+                                   strstr(GetCommandLineA(), "-gncoop=1");      // the co-op test to the splash
         } else {
             port_log("game: DevMenus - unexpected RequestState bytes, boot splash not redirected\n");
         }
