@@ -351,10 +351,10 @@ DWORD __stdcall xapi_XInputGetCapabilities(HANDLE h, XCapabilities *caps)
 }   // extern "C"
 
 // Player 1's Y newly pressed since the previous call (debug hooks).
-bool port_player1_y_pressed()
+bool port_player1_black_pressed()
 {
     static bool was;
-    bool now = g_ports[0].last.bAnalogButtons[XB_Y] > 0x40;
+    bool now = g_ports[0].last.bAnalogButtons[XB_BLACK] > 0x40;
     bool edge = now && !was;
     was = now;
     return edge;

@@ -61,7 +61,7 @@ static FILE *open_log()
     return fopen(path, "w");
 }
 
-void (*port_log_hook)(const char *line);    // gn_core.cpp: forwards diagnostics to the netplay host
+void (*port_log_hook)(int stream, const char *line);    // gn_core.cpp: netplay log forwarding (stream 0 = port.log)
 
 void port_log(const char *fmt, ...)
 {
@@ -83,7 +83,7 @@ void port_log(const char *fmt, ...)
     }
     ReleaseSRWLockExclusive(&lock);
     if (port_log_hook)
-        port_log_hook(buf);
+        port_log_hook(0, buf);
 }
 
 // Reached through a krnl_* trap: [esp] = slot index, [esp+4] = return address into the caller.
@@ -173,15 +173,15 @@ static __declspec(naked) void splash_factory_case()  // edi = state manager, as 
     }
 }
 
-// World map debug menu (world_options.mnu): retail never opens it. Player 1's Y opens it, through the world map's
-// WorldMenu::IsOpen call (0xF99E8).
-bool port_player1_y_pressed();
+// World map debug menu (world_options.mnu): retail never opens it. Player 1's Black (RB) opens it, through the world
+// map's WorldMenu::IsOpen call (0xF99E8). (Y is the map's Rest.)
+bool port_player1_black_pressed();
 
 static bool __fastcall port_worldmenu_isopen(BYTE *menu)
 {
     typedef bool(__fastcall * IsOpenFn)(void *);
     typedef void(__fastcall * OpenFn)(void *);
-    if (!((IsOpenFn)0x4D8D0)(menu) && port_player1_y_pressed())
+    if (!((IsOpenFn)0x4D8D0)(menu) && port_player1_black_pressed())
         ((OpenFn)0x4D9D0)(menu);                        // requests menu 200, map paused until it closes
     return ((IsOpenFn)0x4D8D0)(menu);
 }

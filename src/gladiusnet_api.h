@@ -4,13 +4,15 @@
 #pragma once
 #include "gn.h"
 
-#define GLADIUSNET_ABI 2                 // bump on any change to GnNetApi or to gp_api.h
+#define GLADIUSNET_ABI 3                 // bump on any change to GnNetApi or to gp_api.h
 
 struct GnNetApi {
     uint32_t abi;                        // GLADIUSNET_ABI
     void (*install)();                   // startup, before the game thread runs: code hooks (AI Simulator)
     void (*init)(GnCtx *c);              // first frame, game thread
-    void (*remote_log)(const char *line);    // client: forward a diagnostic line to the host
+    // Every log line as it is written - stream 0 port.log, 1 gladiusnet.log, 2 the session frame trace. A client
+    // forwards diagnostics to the host and, with ShareLogs on, mirrors all three to it.
+    void (*log_line)(int stream, const char *line);
     // Per frame after the pads are sampled: bot input, lobby screens, hand-off syncs, save pick, lockstep exchange.
     // true = a lobby, browser or session is up.
     bool (*frame)(GnCtx *c, int stateId, int sub, bool harness);

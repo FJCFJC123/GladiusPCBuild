@@ -67,7 +67,7 @@ void logf(const char *fmt, ...)
                 GetCurrentProcessId(), line);
         fclose(f);
     }
-    if (const GnNetApi *n = gn_net()) n->remote_log(line);  // a client forwards diagnostics to the host
+    if (const GnNetApi *n = gn_net()) n->log_line(1, line);  // a client forwards diagnostics to the host
 }
 
 // Session trace gladiusnet_trace_{host,client}.txt: one line per frame (seed, state) plus I/O events; diff the two
@@ -127,12 +127,20 @@ void dtrace(const char *fmt, ...)
         if (!strcmp(line, g_dtraceLast)) {
             g_dtraceRepeat++;
         } else {
-            if (g_dtraceRepeat) fprintf(g_dtrace, "  (previous line x%u more)\n", g_dtraceRepeat);
+            const GnNetApi *net = gn_net();             // a client mirrors its trace to the host (ShareLogs)
+            if (g_dtraceRepeat) {
+                fprintf(g_dtrace, "  (previous line x%u more)\n", g_dtraceRepeat);
+                char rep[48];
+                _snprintf(rep, sizeof rep, "  (previous line x%u more)", g_dtraceRepeat);
+                rep[sizeof rep - 1] = 0;
+                if (net) net->log_line(2, rep);
+            }
             g_dtraceRepeat = 0;
             strcpy(g_dtraceLast, line);
             if (ftell(g_dtrace) < TRACE_MAX) {
                 fputs(line, g_dtrace);
                 fputc('\n', g_dtrace);
+                if (net) net->log_line(2, line);
                 static uint32_t frames;                 // a killed / hung instance must not lose its last seconds
                 if (line[0] == 'F' && ++frames % 60 == 0) fflush(g_dtrace);
             } else {
@@ -420,8 +428,8 @@ int gn_init(GnCtx *c)
     QueryPerformanceFrequency(&g_qpf);
     timeBeginPeriod(1);
     g_mainThread = GetCurrentThreadId();                       // gn_init runs on the game thread
-    extern void (*port_log_hook)(const char *line);
-    if (const GnNetApi *n = gn_net()) port_log_hook = n->remote_log;
+    extern void (*port_log_hook)(int stream, const char *line);
+    if (const GnNetApi *n = gn_net()) port_log_hook = n->log_line;
     extern void (*port_sleep_notify)(int enter);
     port_sleep_notify = main_sleep_notify;
     logf(PORT_RELEASE ? "init: deterministic core ok" : "init: deterministic core ok - Ctrl+F9 record, Ctrl+F10 replay");
