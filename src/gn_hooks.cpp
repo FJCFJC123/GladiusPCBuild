@@ -5,6 +5,7 @@
 // Deterministic mode (det_enter while a session or harness run is active):
 //   time_Update 0x18EC20       fixed 1/60 delta (engine override 0x49C2B4 / 0x49C2B0); RealDelta 0x49C214 too
 //   SinceFrameStart 0x18EDC0   real time since the frame began -> 0
+//   script VM slice 0x1C67E0   its two SinceFrameStart reads: a per-frame virtual clock (fixed step per read)
 //   UnitAIScope::Update 0xE3160  AI think loop: fixed iterations instead of 4.5 ms of real time
 //   stream reader 0x4FCA00     reads drained in the I/O gate (gn_core.cpp)
 //   decompressor 0x526EF0      completions handed to worker 0x2105B0: also drained
@@ -135,6 +136,29 @@ static __declspec(naked) void real_delta_store()
         mov dword ptr ds:[0x49C214], FIXED_DT_BITS
     done:
         popfd
+        ret
+    }
+}
+
+// Script VM (0x1C67E0): a script runs until 0.6 ms of SinceFrameStart have passed since the slice began (kept at
+// +0x7C, read every 6 opcodes). With that clock at 0 a script polling in a loop never yields: Valens' first campaign
+// battle hung both machines inside one frame after the first move (2-PC co-op test 2026-10-24, pc looping at 1951).
+// Its two reads (0x1C6837, 0x1C68B9) get a clock of their own: a fixed step per read from 0 at each frame, so every
+// machine yields at the same opcode. 4 us a read: ~150 reads (~900 opcodes) per 0.6 ms slice.
+static float g_vmClock;
+static const float k_vmStep = 0.000004f;
+
+static __declspec(naked) void vm_since_frame_start()
+{
+    __asm {
+        cmp g_det, 0
+        jne det
+        mov eax, 0x18EDC0
+        jmp eax
+    det:
+        fld g_vmClock
+        fadd k_vmStep
+        fst g_vmClock
         ret
     }
 }
@@ -391,6 +415,7 @@ static void __cdecl pad_poll_hook()
         if (g_net) g_net->init(&g_ctx);
     }
     port_pads_sample(g_pads);
+    g_vmClock = 0;                                      // script VM slices: the frame starts here everywhere
     const uint8_t *state = *(const uint8_t *const *)(0x38E448 + 0x14);
     int stateId = state ? *(const int32_t *)(state + 8) : -1;
     int sub = stateId == 21 ? *(const int32_t *)(state + 0x2C) : -1;      // main menu sub-state
@@ -576,6 +601,8 @@ void gn_install(bool netplay)
         !expect(0xE31C1, "e80ab70a00") ||           // call ticks 0x18E8D0
         !expect(0x18EC9B, "d91d14c24900") ||        // fstp [time_RealDelta]
         !expect(0x18EDC0, "a058c24900") ||          // mov al,[QPC flag]
+        !expect(0x1C6837, "e88485fcff") ||          // script VM: call SinceFrameStart
+        !expect(0x1C68B9, "e80285fcff") ||          // same, the per-6-opcodes read
         !expect(0x1FD850, "568bf18a460c") ||        // StreamManager enqueue prologue
         !expect(0x1FD8C0, "568bf18a460c") ||        // StreamManager enqueue-at-front prologue
         !expect(0x1FD5C7, "68e0d41f00") ||          // push completion routine 0x1FD4E0
@@ -592,6 +619,8 @@ void gn_install(bool netplay)
     put_rel(0xE31A1, 0xE9, ai_loop, 5);
     put_rel(0x18EC9B, 0xE8, real_delta_store, 6);
     put_rel(0x18EDC0, 0xE9, since_frame_start, 5);
+    put_rel(0x1C6837, 0xE8, vm_since_frame_start, 5);
+    put_rel(0x1C68B9, 0xE8, vm_since_frame_start, 5);
     put_rel(0x1FD850, 0xE9, enqueue_hook, 6);
     put_rel(0x1FD8C0, 0xE9, enqueue_front_hook, 6);
     *(uint32_t *)(0x1FD5C7 + 1) = (uint32_t)stream_apc;
