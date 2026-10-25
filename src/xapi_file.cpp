@@ -3,6 +3,7 @@
 //   U: saves     -> SaveDir\U                       Z: utility cache -> SaveDir\Z
 #include "port.h"
 #include "handles.h"
+#include "d3d_prof.h"
 #include <set>
 
 static char g_game_dir[MAX_PATH], g_save_dir[MAX_PATH];
@@ -306,8 +307,95 @@ static BOOL native_rw(bool write, HANDLE h, void *buf, DWORD n, DWORD *done, OVE
     return ok;
 }
 
+volatile LONG64 g_port_read_bytes;                      // every game file read (the profiler's hitch report)
+
+// Read bursts ([debug] Profile=1): reads less than 150 ms apart are one burst, logged once it ends - how long it took,
+// how much of that was inside the reads and how much between them (the engine's streaming pace, not the disk).
+static SRWLOCK g_burst_lock = SRWLOCK_INIT;
+static struct {
+    LONG64 t0, last, in_read, between, max_gap;
+    DWORD reads, bytes, big_gaps, threads[4], lo, hi;      // lo / hi: file offsets read (gladius.bec: map to entries)
+} g_burst;
+static double g_qpc_ms;
+static LONG64 g_qpc_base;
+
+// ms since the first call (shared by the io / preview profiler lines so they can be lined up)
+extern "C++" double port_uptime_ms()
+{
+    LARGE_INTEGER t, f;
+    QueryPerformanceCounter(&t);
+    if (!g_qpc_ms) QueryPerformanceFrequency(&f), g_qpc_ms = 1000.0 / f.QuadPart;
+    if (!g_qpc_base) g_qpc_base = t.QuadPart;
+    return (t.QuadPart - g_qpc_base) * g_qpc_ms;
+}
+
+static void burst_flush_locked()
+{
+    if (!g_burst.reads) return;
+    port_log("io: burst @%.3f s, %u reads, %u KB in %.0f ms: %.0f ms reading, %.0f ms between reads (largest gap %.1f "
+             "ms, %u over 10 ms) | offsets %08X-%08X | threads %u %u\n",
+             (g_burst.t0 - g_qpc_base) * g_qpc_ms / 1000.0, g_burst.reads, g_burst.bytes / 1024,
+             (g_burst.last - g_burst.t0) * g_qpc_ms, g_burst.in_read * g_qpc_ms, g_burst.between * g_qpc_ms,
+             g_burst.max_gap * g_qpc_ms, g_burst.big_gaps, g_burst.lo, g_burst.hi, g_burst.threads[0],
+             g_burst.threads[1]);
+    memset(&g_burst, 0, sizeof g_burst);
+}
+
+// profiler thread, every ms: log a burst once 150 ms pass without a read
+extern "C++" void port_io_burst_poll()
+{
+    if (!g_qpc_ms) return;
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    AcquireSRWLockExclusive(&g_burst_lock);
+    if (g_burst.reads && (now.QuadPart - g_burst.last) * g_qpc_ms > 150.0) burst_flush_locked();
+    ReleaseSRWLockExclusive(&g_burst_lock);
+}
+
+struct ReadTimer {
+    LONG64 start = 0;
+    DWORD n, off;
+    ReadTimer(DWORD bytes, const OVERLAPPED *ov) : n(bytes), off(ov ? ov->Offset : 0)
+    {
+        InterlockedExchangeAdd64(&g_port_read_bytes, bytes);
+        if (!g_prof_on) return;
+        port_uptime_ms();                                // sets the base / frequency once
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        start = t.QuadPart;
+    }
+    ~ReadTimer()
+    {
+        if (!start) return;
+        LARGE_INTEGER t, f;
+        QueryPerformanceCounter(&t);
+        if (!g_qpc_ms) QueryPerformanceFrequency(&f), g_qpc_ms = 1000.0 / f.QuadPart;
+        AcquireSRWLockExclusive(&g_burst_lock);
+        if (g_burst.reads && (start - g_burst.last) * g_qpc_ms > 150.0) burst_flush_locked();
+        if (!g_burst.reads) {
+            g_burst.t0 = start;
+        } else {
+            LONG64 gap = start > g_burst.last ? start - g_burst.last : 0;
+            g_burst.between += gap;
+            if (gap > g_burst.max_gap) g_burst.max_gap = gap;
+            if (gap * g_qpc_ms > 10.0) g_burst.big_gaps++;
+        }
+        g_burst.in_read += t.QuadPart - start;
+        g_burst.last = t.QuadPart;
+        if (!g_burst.reads || off < g_burst.lo) g_burst.lo = off;
+        if (off + n > g_burst.hi) g_burst.hi = off + n;
+        g_burst.reads++;
+        g_burst.bytes += n;
+        DWORD tid = GetCurrentThreadId();
+        for (DWORD &x : g_burst.threads)
+            if (!x || x == tid) { x = tid; break; }
+        ReleaseSRWLockExclusive(&g_burst_lock);
+    }
+};
+
 BOOL __stdcall xapi_ReadFile(HANDLE h, void *buf, DWORD n, DWORD *read, OVERLAPPED *ov)
 {
+    ReadTimer rt(n, ov);
     h = vh_real(h);
     if (ov && is_overlapped(h)) {
         BOOL ok = complete_overlapped(false, h, buf, n, read, ov);
@@ -397,6 +485,7 @@ static LPOVERLAPPED_COMPLETION_ROUTINE trace_io(const char *what, HANDLE h, DWOR
 
 BOOL __stdcall xapi_ReadFileEx(HANDLE h, void *buf, DWORD n, OVERLAPPED *ov, LPOVERLAPPED_COMPLETION_ROUTINE cb)
 {
+    ReadTimer rt(n, ov);
     HANDLE vh = h;
     h = vh_real(h);
     if (port_readex_notify) port_readex_notify(buf, n);   // pkgdiag.cpp: read into a freed block?

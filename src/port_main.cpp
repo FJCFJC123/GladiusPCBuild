@@ -3,6 +3,7 @@
 #include "memstats.h"
 #include "container.h"
 #include <tlhelp32.h>
+#include "d3d_prof.h"
 #include <intrin.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -805,6 +806,8 @@ void port_save_pages_init(const char *ini);     // save_pages.cpp
 void port_reboot_init();                        // reboot.cpp
 void port_options_video_init();                 // options_video.cpp
 void port_menu_quit_init();                     // menu_quit.cpp
+void port_text_buffers_init();                  // text_buffers.cpp
+void port_preview_cache_init();                 // preview_cache.cpp
 void port_mods_init();                          // mods.cpp
 void port_editor_init();                        // editor.cpp
 extern "C" volatile LONG g_swap_count;                  // d3d_core.cpp
@@ -818,10 +821,167 @@ static uint32_t first_game_return(uint32_t esp)         // same process: read th
     }
     return 0;
 }
+// Hitch report: a frame over HITCH_MS gets its own "prof: hitch" lines - where the game thread was (top leaf
+// addresses and first game return addresses of that frame's 1 ms samples), the file bytes read and the renderer's
+// texture upload / shader compile work during it.
+extern "C" volatile LONG64 g_port_read_bytes;           // xapi_file.cpp
+void port_io_burst_poll();                              // xapi_file.cpp: logs a finished read burst
+static const double HITCH_MS = 150.0;
+
+static void hitch_report(double ms, LONG frame_no, const std::vector<std::pair<uint32_t, uint32_t>> &samples,
+                         LONG64 read, unsigned long long tex_n, double tex_ms, unsigned long long comp_n, double comp_ms)
+{
+    std::unordered_map<uint32_t, uint32_t> leaf, caller;
+    for (auto &s : samples) leaf[s.first]++, caller[s.second]++;
+    auto top = [](std::unordered_map<uint32_t, uint32_t> &m, int n) {
+        std::vector<std::pair<uint32_t, uint32_t>> v(m.begin(), m.end());
+        std::sort(v.begin(), v.end(), [](auto &a, auto &b) { return a.second > b.second; });
+        if ((int)v.size() > n) v.resize(n);
+        return v;
+    };
+    port_log("prof: hitch %.0f ms (frame %ld): %lld KB read, %llu texture uploads (%.1f ms), %llu shader compiles "
+             "(%.1f ms), %u samples\n", ms, frame_no, read / 1024, tex_n, tex_ms, comp_n, comp_ms,
+             (unsigned)samples.size());
+    char mod[MAX_PATH + 32], line[1024];
+    size_t total = samples.size() ? samples.size() : 1;
+    int o = 0;
+    for (auto &kv : top(leaf, 10))
+        o += _snprintf(line + o, sizeof line - o, " %08X%s=%u%%", kv.first, module_of(kv.first, mod, sizeof mod),
+                       (unsigned)(kv.second * 100 / total));
+    port_log("prof: hitch leaf%s\n", line);
+    o = 0;
+    for (auto &kv : top(caller, 10))
+        o += _snprintf(line + o, sizeof line - o, " %06X=%u%%", kv.first, (unsigned)(kv.second * 100 / total));
+    port_log("prof: hitch caller%s\n", line);
+}
+
+// Preview marker: the school / recruit / shop gladiator viewer starts each model load with the request 0x512D0 at
+// 0x1188BE (cdecl, 5 args); logged with the io burst clock so the load's read bursts can be lined up with it.
+double port_uptime_ms();                                // xapi_file.cpp
+static volatile DWORD g_preview_obj;                    // the request's character visual (state byte +0x34)
+
+static void __cdecl preview_load(DWORD a, DWORD b, DWORD c, DWORD d, DWORD e)
+{
+    port_log("preview: load request @%.3f s (visual %08X)\n", port_uptime_ms() / 1000.0, a);
+    ((void(__cdecl *)(DWORD, DWORD, DWORD, DWORD, DWORD))0x512D0)(a, b, c, d, e);
+    g_preview_obj = a;
+}
+
+// profiler thread: log every change of the preview visual's state bytes (+0x34 state, +0x35, +0x37 flags)
+static void preview_poll()
+{
+    static DWORD obj, last = 0xFFFFFFFF;
+    DWORD o = g_preview_obj;
+    if (!o) return;
+    if (o != obj) obj = o, last = 0xFFFFFFFF;
+    __try {
+        const BYTE *p = (const BYTE *)o;
+        DWORD v = p[0x34] | p[0x35] << 8 | p[0x37] << 16;
+        if (v != last) {
+            port_log("preview: @%.3f s visual %08X state %u flags %02X %02X\n", port_uptime_ms() / 1000.0, o, p[0x34],
+                     p[0x35], p[0x37]);
+            last = v;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_preview_obj = 0;                               // freed
+    }
+}
+
+// Which screen code hands gladiators to the preview cache (0x12CAE0, thiscall viewer, 1 arg): each call site logs
+// once with its viewer and argument (preload groundwork).
+static const DWORD k_cache_sites[] = {0x1014A2, 0x1015D8, 0x106D42, 0x106E31, 0x12D2DC,
+                                      0x12D311, 0x134BEC, 0x14ED2C, 0x153698, 0x15371A};
+static void *__fastcall cache_add_logged(void *viewer, void *, void *arg)
+{
+    DWORD site = (DWORD)_ReturnAddress() - 5;
+    static DWORD seen[16];
+    for (int i = 0; i < 16; i++) {
+        if (seen[i] == site) break;
+        if (!seen[i]) {
+            seen[i] = site;
+            const DWORD *a = (const DWORD *)arg;
+            port_log("preview: cache add from %06X viewer %p arg %p [%08X %08X %08X %08X | +20 %08X]\n", site, viewer,
+                     arg, a ? a[0] : 0, a ? a[1] : 0, a ? a[2] : 0, a ? a[3] : 0, a ? a[8] : 0);
+            break;
+        }
+    }
+    return ((void *(__thiscall *)(void *, void *))0x12CAE0)(viewer, arg);
+}
+
+// Which screen code calls the viewer's show (0x12D2D0, ecx = viewer, 1 arg): every call site logs once with the
+// registers that may hold its screen object (preload groundwork; the screen's layout is then read from outside).
+static const DWORD k_show_sites[] = {0x112017, 0x11252B, 0x115039, 0x11539F, 0x1153F4, 0x11636A, 0x1163A4, 0x1168E8,
+                                     0x138C0A, 0x138C17, 0x13B618, 0x1436AA, 0x143897, 0x146620, 0x146CA5, 0x1505DE,
+                                     0x150B51, 0x1586D3, 0x158B59, 0x158C48, 0x15A2B1, 0x15D7E2};
+static void __cdecl note_show(DWORD ebp_, DWORD ebx_, DWORD edi_, DWORD esi_, DWORD ecx_, DWORD ret)
+{
+    static DWORD seen[32];
+    DWORD site = ret - 5;
+    for (int i = 0; i < 32; i++) {
+        if (seen[i] == site) return;
+        if (!seen[i]) { seen[i] = site; break; }
+    }
+    port_log("preview: show from %06X viewer %08X | esi %08X edi %08X ebx %08X ebp %08X\n", site, ecx_, esi_, edi_,
+             ebx_, ebp_);
+}
+static __declspec(naked) void show_stub()
+{
+    __asm {
+        pushad                                           // +0 edi +4 esi +8 ebp +C esp +10 ebx +14 edx +18 ecx +1C eax
+        push dword ptr [esp + 0x20]                      // return address
+        push dword ptr [esp + 0x1C]                      // ecx (viewer)
+        push dword ptr [esp + 0x0C]                      // esi
+        push dword ptr [esp + 0x0C]                      // edi
+        push dword ptr [esp + 0x20]                      // ebx
+        push dword ptr [esp + 0x1C]                      // ebp
+        call note_show
+        add esp, 24
+        popad
+        mov eax, 0x12D2D0
+        jmp eax
+    }
+}
+
+static void install_preview_marker()
+{
+    for (DWORD s : k_show_sites) {
+        BYTE *c = (BYTE *)s;
+        if (c[0] == 0xE8 && s + 5 + *(int32_t *)(c + 1) == 0x12D2D0)
+            *(int32_t *)(c + 1) = (int32_t)((DWORD)show_stub - (s + 5));
+        else
+            port_log("prof: show site %06X not as expected\n", s);
+    }
+    for (DWORD s : k_cache_sites) {
+        BYTE *c = (BYTE *)s;
+        if (c[0] == 0xE8 && s + 5 + *(int32_t *)(c + 1) == 0x12CAE0)
+            *(int32_t *)(c + 1) = (int32_t)((DWORD)cache_add_logged - (s + 5));
+        else
+            port_log("prof: cache site %06X not as expected\n", s);
+    }
+    BYTE *p = (BYTE *)0x1188BE;
+    if (p[0] != 0xE8 || 0x1188BE + 5 + *(int32_t *)(p + 1) != 0x512D0) {
+        port_log("prof: preview marker not installed (unexpected call at 1188BE)\n");
+        return;
+    }
+    *(int32_t *)(p + 1) = (int32_t)((DWORD)preview_load - (0x1188BE + 5));
+}
+
 static DWORD WINAPI profiler_thread(LPVOID param)
 {
     HANDLE t = (HANDLE)param;
     timeBeginPeriod(1);
+    LARGE_INTEGER q0, q1;                               // rdtsc ticks per ms (the renderer zones count in rdtsc)
+    QueryPerformanceCounter(&q0);
+    unsigned long long r0 = __rdtsc();
+    Sleep(100);
+    QueryPerformanceCounter(&q1);
+    unsigned long long r1 = __rdtsc();
+    LARGE_INTEGER qf;
+    QueryPerformanceFrequency(&qf);
+    double tsc_per_ms = (double)(r1 - r0) / ((q1.QuadPart - q0.QuadPart) * 1000.0 / qf.QuadPart);
+    LONG64 read0 = g_port_read_bytes;
+    unsigned long long tex0 = g_prof_count[PC_TEX_UPLOADS], comp0 = g_prof_count[PC_COMPILES];
+    unsigned long long texz0 = g_prof_ticks[PZ_TEXUPLOAD], compz0 = g_prof_ticks[PZ_COMPILE];
     struct Sample { uint32_t eip, caller; };
     std::vector<Sample> frame;
     std::unordered_map<uint32_t, uint32_t> leaf, caller;
@@ -839,6 +999,16 @@ static DWORD WINAPI profiler_thread(LPVOID param)
             frame_start = now;
             last_swap = sc;
             frames++;
+            LONG64 rd = g_port_read_bytes;
+            unsigned long long tx = g_prof_count[PC_TEX_UPLOADS], cp = g_prof_count[PC_COMPILES];
+            unsigned long long txz = g_prof_ticks[PZ_TEXUPLOAD], cpz = g_prof_ticks[PZ_COMPILE];
+            if (ms > HITCH_MS) {
+                std::vector<std::pair<uint32_t, uint32_t>> s;
+                for (auto &x : frame) s.push_back({x.eip, x.caller});
+                hitch_report(ms, sc, s, rd - read0, tx - tex0, (txz - texz0) / tsc_per_ms,
+                             cp - comp0, (cpz - compz0) / tsc_per_ms);
+            }
+            read0 = rd, tex0 = tx, comp0 = cp, texz0 = txz, compz0 = cpz;
             if (ms > 25.0) {
                 slow_frames++;
                 for (auto &s : frame) {
@@ -862,6 +1032,8 @@ static DWORD WINAPI profiler_thread(LPVOID param)
         uint32_t key = (e >= 0x12000 && e < 0x5E1000) ? (e & ~0x3Fu) : e;
         if (frame.size() < 4096)
             frame.push_back({key, first});
+        port_io_burst_poll();
+        preview_poll();
         if (GetTickCount() - last_report >= 10000 && slow_samples) {
             last_report = GetTickCount();
             auto top = [](std::unordered_map<uint32_t, uint32_t> &m, int n) {
@@ -963,6 +1135,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         port_log("game: %d of %d string buffers raised to %u bytes (ItemDB was 84000)\n", raised,
                  (int)(sizeof bufs / sizeof bufs[0]), ceiling);
     }
+    port_preview_cache_init();                          // preview cache 6 -> 40 + school/shop preload (preview_cache.cpp)
     // Fixed object pools: static arrays in the XBE's data, threaded into a freelist by one init function each (run from
     // a C++ ctor). Nothing else addresses the arrays (their base getters have no callers) and the capacity the stats
     // ctor (0x1776B0) records is display only, so a pool moves by rewriting its init's six constants: head = base,
@@ -1120,6 +1293,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     port_reboot_init();                                 // soft reboot -> seamless relaunch
     port_options_video_init();                          // Options screen: Video page
     port_menu_quit_init();                              // main menu: Quit Game
+    port_text_buffers_init();                           // 16 KB format buffer, 64 KB frame text area
     port_mods_init();                                   // loose data\ files win over gladius.bec
     port_editor_init();                                 // gladius_editor.exe: the editor window
     HANDLE t = CreateThread(nullptr, 0x100000, game_thread, (LPVOID)info, CREATE_SUSPENDED, nullptr);
@@ -1132,6 +1306,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         SetThreadPriority(pt, THREAD_PRIORITY_HIGHEST);
         CloseHandle(pt);
         port_log("debug: main-thread sampling profiler on (prof: lines every 10 s)\n");
+        install_preview_marker();
     }
     // watchdog: while the game thread runs, dump where every game thread is every 6 s
     for (DWORD tick = 0; WaitForSingleObject(t, 50) == WAIT_TIMEOUT;) {
