@@ -41,57 +41,90 @@ static void preload_one(BYTE *viewer, DWORD ch)
 }
 
 // The screens with a gladiator grid: the grid and viewer wrapper offsets in the screen, the wrapper's class (the shop's
-// is a subclass) and its viewer update calls (both run with esi = the screen).
-enum { K_CHAR_VT = 0x341B54 };                            // display character class
-struct GridScreen { const char *name; DWORD grid_off, wrapper_off, wrapper_vt, sites[2]; };
+// is a subclass), how the grid holds its gladiators and its viewer update calls (all run with esi = the screen).
+//   GRID_CHARS   (school, shop): count +0xAC, display characters at +0xC0 ([0] the shown one, [1..count] the list)
+//   GRID_LIST    (battle select roster): count +0xAC, display characters at +0xC0 ([0..count-1])
+//   GRID_BUTTONS (recruit): count +0xAC, buttons of 0x18 bytes at +0xC4, each +0x10 -> a recruit entry whose
+//                +0xC -> the display character
+enum { K_CHAR_VT = 0x341B54, K_BUTTON_VT = 0x351398 };     // display character / recruit list button classes
+enum { GRID_CHARS, GRID_LIST, GRID_BUTTONS, MAX_LIST = 200 };
+struct GridScreen { const char *name; DWORD grid_off, wrapper_off, wrapper_vt; int kind; DWORD sites[2]; };
 static const GridScreen k_screens[] = {
-    {"school", 0x4C, 0x50, 0x350A40, {0x1436B4, 0x146EAA}},
-    {"shop", 0x48, 0x4C, 0x3526B0, {0x15D7EC, 0x15ACD7}},
+    {"school", 0x4C, 0x50, 0x350A40, GRID_CHARS, {0x1436B4, 0x146EAA}},
+    {"shop", 0x48, 0x4C, 0x3526B0, GRID_CHARS, {0x15D7EC, 0x15ACD7}},
+    {"recruit", 0x58, 0x5C, 0x350A40, GRID_BUTTONS, {0x13B622, 0}},
+    {"battle select", 0x64, 0x6C, 0x350A40, GRID_LIST, {0x115045, 0x1163C4}},
 };
 
-// The grid and its viewer, if `screen` really is one of k_screens (checked by class, so a call site shared with
-// another screen does nothing).
-static bool grid_of(BYTE *screen, const GridScreen &k, BYTE **grid, BYTE **viewer, int *n)
+// The viewer and the grid's gladiators (at most CACHE_CAP - 1, so the shown one keeps its place), if `screen` really
+// is one of k_screens (checked by class, so a call site shared with another screen does nothing).
+static int grid_of(BYTE *screen, const GridScreen &k, BYTE **viewer, DWORD *chars, int *n)
 {
     __try {
         BYTE *g = *(BYTE **)(screen + k.grid_off), *w = *(BYTE **)(screen + k.wrapper_off);
-        if (!g || !w || *(DWORD *)w != k.wrapper_vt) return false;
-        int c = *(int *)(g + 0xAC);
-        if (c < 1 || c > CACHE_CAP) return false;
-        for (int i = 0; i <= c; i++) {
-            DWORD ch = ((DWORD *)(g + 0xC0))[i];
-            if (ch && *(DWORD *)ch != K_CHAR_VT) return false;
+        if (!g || !w || *(DWORD *)w != k.wrapper_vt) return 0;
+        int c = *(int *)(g + 0xAC), got = 0;
+        if (c < 1 || c > (k.kind == GRID_CHARS ? CACHE_CAP : MAX_LIST)) return 0;
+        for (int i = 0; i < c + (k.kind == GRID_CHARS); i++) {
+            DWORD ch;
+            if (k.kind != GRID_BUTTONS) {
+                ch = ((DWORD *)(g + 0xC0))[i];
+            } else {
+                BYTE *b = g + 0xC4 + i * 0x18;
+                if (*(DWORD *)b != K_BUTTON_VT) return 0;
+                BYTE *entry = *(BYTE **)(b + 0x10);
+                DWORD *pch = entry ? *(DWORD **)(entry + 0xC) : nullptr;
+                ch = pch ? *pch : 0;
+            }
+            if (!ch) continue;
+            if (*(DWORD *)ch != K_CHAR_VT) return 0;
+            if (got < CACHE_CAP - 1) chars[got++] = ch;
         }
-        *grid = g, *viewer = w + 0x14, *n = c;
-        return true;
+        *viewer = w + 0x14, *n = c;
+        return got;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        return 0;
     }
 }
 
 // Each call: a screen's viewer update (once a frame). PRELOAD_FIRST calls after the screen opens every gladiator in
 // its grid that isn't cached is added at once (their loads run side by side); every PRELOAD_EVERY calls after that
-// any new one (a gladiator joining while the screen is open) is.
+// any new one (a gladiator joining while the screen is open) is. A screen reopened at the same address is told apart
+// by its cache: leaving a screen frees it, so the new one starts smaller than the last one was (the cap is never
+// reached, so nothing is evicted).
+static int cache_size(BYTE *viewer)
+{
+    int c = 0;
+    for (BYTE *e = *(BYTE **)(viewer + 0x24); e; e = *(BYTE **)e) c++;
+    return c;
+}
+
 static void __cdecl preload_step(BYTE *screen, const GridScreen *k)
 {
-    static struct { BYTE *screen; unsigned calls; } st[4];
-    static unsigned logged;
+    enum { SLOTS = 8 };
+    static struct { BYTE *screen; const GridScreen *k; unsigned calls; int size; } st[SLOTS];
+    static unsigned logged, next_slot;
     int s = 0;
-    while (s < 4 && st[s].screen && st[s].screen != screen) s++;
-    if (s == 4) s = 0, st[0].screen = nullptr;
-    if (st[s].screen != screen) st[s].screen = screen, st[s].calls = 0;
+    while (s < SLOTS && !(st[s].screen == screen && st[s].k == k)) s++;
+    if (s == SLOTS) {
+        s = next_slot++ % SLOTS;
+        st[s].screen = screen, st[s].k = k, st[s].calls = 0, st[s].size = 0;
+    }
+    BYTE *viewer;
+    DWORD chars[CACHE_CAP];
+    int n, got = grid_of(screen, *k, &viewer, chars, &n), added = 0;
+    if (!got) return;
+    int size = cache_size(viewer);
+    if (size < st[s].size) st[s].calls = 0;               // closed and reopened
+    st[s].size = size;
     unsigned calls = ++st[s].calls;
     if (calls != PRELOAD_FIRST && (calls < PRELOAD_FIRST || (calls - PRELOAD_FIRST) % PRELOAD_EVERY)) return;
-    BYTE *grid, *viewer;
-    int n;
-    if (!grid_of(screen, *k, &grid, &viewer, &n)) return;
-    int added = 0;
-    for (int i = 0; i <= n; i++) {                       // [0] is the shown gladiator, [1..n] the list
-        DWORD ch = ((DWORD *)(grid + 0xC0))[i];
-        if (!ch || cached(viewer, ch)) continue;
-        preload_one(viewer, ch);
+    for (int i = 0; i < got; i++) {
+        if (cached(viewer, chars[i])) continue;
+        preload_one(viewer, chars[i]);
         added++;
     }
+    st[s].size = cache_size(viewer);
     if (added && logged++ < 20)
         port_log("preview: preloaded %d of %d %s gladiators (viewer update %u)\n", added, n, k->name, calls);
 }
@@ -110,7 +143,9 @@ static void __cdecl preload_step(BYTE *screen, const GridScreen *k)
     }
 UPDATE_STUB(school_update_stub, 0)
 UPDATE_STUB(shop_update_stub, 1)
-static void (*const k_stubs[])() = {school_update_stub, shop_update_stub};
+UPDATE_STUB(recruit_update_stub, 2)
+UPDATE_STUB(battle_update_stub, 3)
+static void (*const k_stubs[])() = {school_update_stub, shop_update_stub, recruit_update_stub, battle_update_stub};
 
 void port_preview_cache_init()
 {
@@ -123,14 +158,16 @@ void port_preview_cache_init()
         return;                                          // the preload relies on the bigger cache
     }
     for (int i = 0; i < (int)(sizeof k_screens / sizeof k_screens[0]); i++) {
-        int hooked = 0;
+        int hooked = 0, want = 0;
         for (DWORD s : k_screens[i].sites) {
+            if (!s) continue;
+            want++;
             BYTE *c = (BYTE *)s;
             if (c[0] == 0xE8 && s + 5 + *(int32_t *)(c + 1) == k_update) {
                 *(int32_t *)(c + 1) = (int32_t)((DWORD)k_stubs[i] - (s + 5));
                 hooked++;
             }
         }
-        port_log("game: %s gladiator preload %s\n", k_screens[i].name, hooked == 2 ? "on" : "not installed");
+        port_log("game: %s gladiator preload %s\n", k_screens[i].name, hooked == want ? "on" : "not installed");
     }
 }
