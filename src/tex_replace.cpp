@@ -5,9 +5,11 @@
 // The game thread never waits: the original shows until the HD one is ready. Swizzled textures only (linear ones
 // address texels in pixels).
 //
-// Button prompts: the HUD and menus draw button_xbox_*.tga (loose files and the battle HUD bundle
-// battlehud_interfaceGUI_swingmeter.ptx). While a PlayStation or Nintendo controller is the one in use, those draws
-// show gladius.bec's PS2 (button_ps2_*) / GameCube (button_cube_*) prompts, fitted into the Xbox prompt's image area.
+// Button prompts: the HUD and menus draw button_xbox_* - mostly pieces of the battlehud_interfaceGUI_swingmeter.ptx
+// atlas (loaded at boot; the $t\buttons\*.tga loads find those pieces by name), else loose files - and text draws
+// "<p Confirm>" icons from xbox_talk_0..3 (A, B, Y, X). While a PlayStation or Nintendo controller is the one in use,
+// those draws show gladius.bec's PS2 (button_ps2_*) / GameCube (button_cube_*) prompts, fitted into the Xbox prompt's
+// image area (in an atlas: a copy of the atlas with those pieces redrawn).
 // Render side only - game memory (synced in netplay) is untouched. [input] ButtonPrompts = auto (the controller
 // pressed last) / xbox / playstation / nintendo.
 #include "d3d.h"
@@ -49,6 +51,7 @@ static unsigned g_hits, g_misses;
 
 bool port_read_game_file(const std::string &key, std::string &out);   // bec_read.cpp
 void d3d_texture_dirty(XPixelContainer *t);                            // d3d_render.cpp
+void d3d_texture_dirty_data(DWORD data);                               // d3d_render.cpp: every format / size at it
 
 // Xbox prompt -> PS2 / GameCube file suffix. LB / RB are white / black, LT / RT the Xbox L / R.
 struct Prompt { const char *xbox, *alt[2]; };
@@ -66,13 +69,26 @@ static int g_prompt_mode = -1;                                   // -1 auto, els
 static int g_prompt_applied;                                     // style the texture cache was last switched to
 static std::map<DWORD, std::pair<DWORD, int>> g_prompt_tex;      // Xbox prompt Data -> (Format, prompt index)
 static std::map<int, ID3D11ShaderResourceView *> g_prompt_srv;   // prompt index * 3 + style -> fitted image
+// Prompts that are pieces of a bundle atlas (battlehud_interfaceGUI_swingmeter_1: the HUD and menus draw them from
+// there): their texel rectangle in the atlas, and the atlas copies with them redrawn.
+struct PromptPiece { int pi; UINT x, y, w, h; };
+static std::map<DWORD, std::vector<PromptPiece>> g_prompt_pieces;   // atlas Data -> its prompt pieces
+struct AtlasSrv { DWORD sum; bool built; ID3D11ShaderResourceView *srv; };
+static std::map<std::pair<DWORD, int>, AtlasSrv> g_atlas_srv;      // (atlas Data, style) -> atlas with prompts redrawn
 
+// button_xbox_<prompt>, or xbox_talk_0..3 (A, B, Y, X: the button icons inside text, "<p Confirm>")
 static int prompt_index(const std::string &key)
 {
-    if (key.compare(0, 12, "button_xbox_"))
+    static const char *const talk[] = {"a", "b", "y", "x"};
+    const char *name = nullptr;
+    if (!key.compare(0, 12, "button_xbox_"))
+        name = key.c_str() + 12;
+    else if (key.size() == 11 && !key.compare(0, 10, "xbox_talk_") && key[10] >= '0' && key[10] <= '3')
+        name = talk[key[10] - '0'];
+    if (!name)
         return -1;
     for (int i = 0; i < NPROMPTS; i++)
-        if (key.compare(12, std::string::npos, g_prompts[i].xbox) == 0)
+        if (!strcmp(name, g_prompts[i].xbox))
             return i;
     return -1;
 }
@@ -156,6 +172,7 @@ static void note_bitmap(void *bitmap)                           // bitmap built:
         g_prompt_tex[t->Data] = {t->Format, pi};
     else
         g_prompt_tex.erase(t->Data);
+    g_prompt_pieces.erase(t->Data);                             // a bundle's atlas is built before its pieces
     InterlockedIncrement(&g_tex_names_gen);
     if (g_enabled)
         request(r, t->Data);
@@ -169,14 +186,46 @@ static void __fastcall build_from_pttp(void *bitmap, void *edx, void *data, int 
     note_bitmap(bitmap);
 }
 
+// A piece of the bundle's atlas (it shares the atlas texture): if it is a prompt, note its texel rectangle -
+// +0xC x, +0xE top row (the builder flips the entry's bottom-up y), +0x18 / +0x1A size.
+static void note_piece(void *bitmap)
+{
+    const BYTE *b = (const BYTE *)bitmap;
+    const XPixelContainer *t = (const XPixelContainer *)(b + 0x74);
+    if (!t->Data || t->Data == 0xFFFFFFFF || t->Size)
+        return;
+    const char *name = (const char *)(b + 0x20), *base = name;
+    for (const char *p = name; *p; p++)
+        if (*p == '\\' || *p == '/')
+            base = p + 1;
+    int pi = prompt_index(pack_key(base));
+    if (pi < 0)
+        return;
+    PromptPiece pc = {pi, *(const WORD *)(b + 0xC), *(const WORD *)(b + 0xE), *(const WORD *)(b + 0x18),
+                      *(const WORD *)(b + 0x1A)};
+    UINT tw, th;
+    tex_dims(t->Format, &tw, &th);
+    if (!pc.w || !pc.h || pc.x + pc.w > tw || pc.y + pc.h > th)
+        return;
+    EnterCriticalSection(&g_cs);
+    std::vector<PromptPiece> &v = g_prompt_pieces[t->Data];
+    size_t i = 0;
+    while (i < v.size() && v[i].pi != pi) i++;
+    if (i == v.size()) v.push_back(pc);
+    else v[i] = pc;
+    LeaveCriticalSection(&g_cs);
+}
+
 // tex_Bitmap::BuildFromBundleEntry (0x1EC600). Entry: +1 'A'/'B'/'C' (DXT1/3/5), +0x10 data offset (0 = a piece of
-// the shared atlas, skipped), +0x14 name.
+// the shared atlas), +0x14 name.
 typedef void *(__fastcall *BuildEntryFn)(void *bitmap, void *edx, const BYTE *entry, int param, int flags);
 static void *__fastcall build_from_entry(void *bitmap, void *edx, const BYTE *entry, int param, int flags)
 {
     void *r = ((BuildEntryFn)0x1EC600)(bitmap, edx, entry, param, flags);
     if (*(const DWORD *)(entry + 0x10))
         note_bitmap(bitmap);
+    else
+        note_piece(bitmap);
     return r;
 }
 
@@ -352,13 +401,10 @@ static DWORD WINAPI prompt_loader(void *)
     return 0;
 }
 
-// Fit an alternate prompt into the Xbox texture's image area (aspect kept, centred, bilinear), as a texture of the
-// Xbox texture's size so the game's texture coordinates still land on it.
-static ID3D11ShaderResourceView *fit_prompt(const AltImage &a, const NameRec &r)
+// Draw an alternate prompt over the rw x rh rectangle at (rx, ry) of a BGRA image tw texels wide (aspect kept,
+// centred, bilinear, transparent around it).
+static void fit_into(const AltImage &a, std::vector<BYTE> &px, UINT tw, UINT rx, UINT ry, UINT rw, UINT rh)
 {
-    UINT tw, th, rw, rh;
-    tex_dims(r.format, &tw, &th);
-    image_area(r, &rw, &rh);
     float s = min((float)rw / a.w, (float)rh / a.h);
     float ox = (rw - a.w * s) / 2, oy = (rh - a.h * s) / 2;
     auto at = [&](int x, int y, float c[4]) {                    // premultiplied texel, transparent outside
@@ -367,7 +413,6 @@ static ID3D11ShaderResourceView *fit_prompt(const AltImage &a, const NameRec &r)
         float al = (p >> 24) / 255.0f;
         c[0] = (p & 0xFF) * al, c[1] = ((p >> 8) & 0xFF) * al, c[2] = ((p >> 16) & 0xFF) * al, c[3] = al;
     };
-    std::vector<BYTE> px((size_t)tw * th * 4, 0);
     for (UINT y = 0; y < rh; y++)
         for (UINT x = 0; x < rw; x++) {
             float u = (x + 0.5f - ox) / s - 0.5f, v = (y + 0.5f - oy) / s - 0.5f;
@@ -378,11 +423,38 @@ static ID3D11ShaderResourceView *fit_prompt(const AltImage &a, const NameRec &r)
                 at(x0 + (k & 1), y0 + (k >> 1), t);
                 for (int ch = 0; ch < 4; ch++) c[ch] += t[ch] * wgt[k];
             }
-            BYTE *o = &px[((size_t)y * tw + x) * 4];
-            if (c[3] > 0.002f)
-                for (int ch = 0; ch < 3; ch++) o[ch] = (BYTE)min(255.0f, c[ch] / c[3] + 0.5f);
+            BYTE *o = &px[((size_t)(ry + y) * tw + rx + x) * 4];
+            for (int ch = 0; ch < 3; ch++) o[ch] = c[3] > 0.002f ? (BYTE)min(255.0f, c[ch] / c[3] + 0.5f) : 0;
             o[3] = (BYTE)min(255.0f, c[3] * 255 + 0.5f);
         }
+}
+
+// The alternate prompt fitted into the Xbox texture's image area, as a texture of the Xbox texture's size so the
+// game's texture coordinates still land on it.
+static ID3D11ShaderResourceView *fit_prompt(const AltImage &a, const NameRec &r)
+{
+    UINT tw, th, rw, rh;
+    tex_dims(r.format, &tw, &th);
+    image_area(r, &rw, &rh);
+    std::vector<BYTE> px((size_t)tw * th * 4, 0);
+    fit_into(a, px, tw, 0, 0, rw, rh);
+    return make_srv(px, tw, th);
+}
+
+// A copy of a bundle atlas with its prompt pieces redrawn in `style`.
+static ID3D11ShaderResourceView *fit_atlas(DWORD data, DWORD format, const std::vector<PromptPiece> &pieces, int style)
+{
+    UINT tw, th;
+    tex_dims(format, &tw, &th);
+    std::vector<BYTE> px((size_t)tw * th * 4);
+    for (UINT y = 0; y < th; y++)
+        for (UINT x = 0; x < tw; x++) {
+            DWORD c = d3d_texel(data, format, x, y);
+            memcpy(&px[((size_t)y * tw + x) * 4], &c, 4);
+        }
+    for (const PromptPiece &p : pieces)
+        if (!g_alt[p.pi][style - 1].px.empty())
+            fit_into(g_alt[p.pi][style - 1], px, tw, p.x, p.y, p.w, p.h);
     return make_srv(px, tw, th);
 }
 
@@ -483,12 +555,17 @@ void tex_prompts_poll()
         port_log("prompts: %s button prompts\n", styles[want]);
     g_prompt_applied = want;
     EnterCriticalSection(&g_cs);
-    for (auto &kv : g_prompt_tex) {
-        XPixelContainer t = {};
-        t.Data = kv.first, t.Format = kv.second.first;
-        d3d_texture_dirty(&t);
-    }
+    for (auto &kv : g_prompt_tex)
+        d3d_texture_dirty_data(kv.first);
+    for (auto &kv : g_prompt_pieces)
+        d3d_texture_dirty_data(kv.first);
     LeaveCriticalSection(&g_cs);
+}
+
+// Same texels: colour format and size match (a draw may set the texture with other header bits than its bitmap's).
+static bool same_texels(DWORD a, DWORD b)
+{
+    return ((a ^ b) & 0x0FF0FF00) == 0;
 }
 
 static ID3D11ShaderResourceView *prompt_srv(DWORD data, DWORD format)
@@ -508,6 +585,23 @@ static ID3D11ShaderResourceView *prompt_srv(DWORD data, DWORD format)
         if (c == g_prompt_srv.end())
             c = g_prompt_srv.emplace(pi * 3 + style, a.px.empty() ? nullptr : fit_prompt(a, it->second)).first;
         if ((srv = c->second) != nullptr)
+            srv->AddRef();
+    }
+    auto ap = g_prompt_pieces.find(data);
+    if (!srv && ap != g_prompt_pieces.end() && it != g_names.end() && same_texels(it->second.format, format) &&
+        it->second.sum == d3d_tex_sample_sum(data, it->second.format, 0)) {
+        AtlasSrv &c = g_atlas_srv[{data, style}];
+        if (c.built && c.sum != it->second.sum) {                // the memory now holds another atlas
+            if (c.srv) c.srv->Release();
+            c = {};
+        }
+        if (!c.built) {
+            c = {it->second.sum, true, fit_atlas(data, it->second.format, ap->second, style)};
+            static int logged;
+            if (logged++ < 20)
+                port_log("prompts: %s - %u prompts redrawn\n", it->second.key.c_str(), (unsigned)ap->second.size());
+        }
+        if ((srv = c.srv) != nullptr)
             srv->AddRef();
     }
     LeaveCriticalSection(&g_cs);

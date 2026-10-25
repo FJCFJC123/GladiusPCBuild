@@ -855,117 +855,6 @@ static void hitch_report(double ms, LONG frame_no, const std::vector<std::pair<u
     port_log("prof: hitch caller%s\n", line);
 }
 
-// Preview marker: the school / recruit / shop gladiator viewer starts each model load with the request 0x512D0 at
-// 0x1188BE (cdecl, 5 args); logged with the io burst clock so the load's read bursts can be lined up with it.
-double port_uptime_ms();                                // xapi_file.cpp
-static volatile DWORD g_preview_obj;                    // the request's character visual (state byte +0x34)
-
-static void __cdecl preview_load(DWORD a, DWORD b, DWORD c, DWORD d, DWORD e)
-{
-    port_log("preview: load request @%.3f s (visual %08X)\n", port_uptime_ms() / 1000.0, a);
-    ((void(__cdecl *)(DWORD, DWORD, DWORD, DWORD, DWORD))0x512D0)(a, b, c, d, e);
-    g_preview_obj = a;
-}
-
-// profiler thread: log every change of the preview visual's state bytes (+0x34 state, +0x35, +0x37 flags)
-static void preview_poll()
-{
-    static DWORD obj, last = 0xFFFFFFFF;
-    DWORD o = g_preview_obj;
-    if (!o) return;
-    if (o != obj) obj = o, last = 0xFFFFFFFF;
-    __try {
-        const BYTE *p = (const BYTE *)o;
-        DWORD v = p[0x34] | p[0x35] << 8 | p[0x37] << 16;
-        if (v != last) {
-            port_log("preview: @%.3f s visual %08X state %u flags %02X %02X\n", port_uptime_ms() / 1000.0, o, p[0x34],
-                     p[0x35], p[0x37]);
-            last = v;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        g_preview_obj = 0;                               // freed
-    }
-}
-
-// Which screen code hands gladiators to the preview cache (0x12CAE0, thiscall viewer, 1 arg): each call site logs
-// once with its viewer and argument (preload groundwork).
-static const DWORD k_cache_sites[] = {0x1014A2, 0x1015D8, 0x106D42, 0x106E31, 0x12D2DC,
-                                      0x12D311, 0x134BEC, 0x14ED2C, 0x153698, 0x15371A};
-static void *__fastcall cache_add_logged(void *viewer, void *, void *arg)
-{
-    DWORD site = (DWORD)_ReturnAddress() - 5;
-    static DWORD seen[16];
-    for (int i = 0; i < 16; i++) {
-        if (seen[i] == site) break;
-        if (!seen[i]) {
-            seen[i] = site;
-            const DWORD *a = (const DWORD *)arg;
-            port_log("preview: cache add from %06X viewer %p arg %p [%08X %08X %08X %08X | +20 %08X]\n", site, viewer,
-                     arg, a ? a[0] : 0, a ? a[1] : 0, a ? a[2] : 0, a ? a[3] : 0, a ? a[8] : 0);
-            break;
-        }
-    }
-    return ((void *(__thiscall *)(void *, void *))0x12CAE0)(viewer, arg);
-}
-
-// Which screen code calls the viewer's show (0x12D2D0, ecx = viewer, 1 arg): every call site logs once with the
-// registers that may hold its screen object (preload groundwork; the screen's layout is then read from outside).
-static const DWORD k_show_sites[] = {0x112017, 0x11252B, 0x115039, 0x11539F, 0x1153F4, 0x11636A, 0x1163A4, 0x1168E8,
-                                     0x138C0A, 0x138C17, 0x13B618, 0x1436AA, 0x143897, 0x146620, 0x146CA5, 0x1505DE,
-                                     0x150B51, 0x1586D3, 0x158B59, 0x158C48, 0x15A2B1, 0x15D7E2};
-static void __cdecl note_show(DWORD ebp_, DWORD ebx_, DWORD edi_, DWORD esi_, DWORD ecx_, DWORD ret)
-{
-    static DWORD seen[32];
-    DWORD site = ret - 5;
-    for (int i = 0; i < 32; i++) {
-        if (seen[i] == site) return;
-        if (!seen[i]) { seen[i] = site; break; }
-    }
-    port_log("preview: show from %06X viewer %08X | esi %08X edi %08X ebx %08X ebp %08X\n", site, ecx_, esi_, edi_,
-             ebx_, ebp_);
-}
-static __declspec(naked) void show_stub()
-{
-    __asm {
-        pushad                                           // +0 edi +4 esi +8 ebp +C esp +10 ebx +14 edx +18 ecx +1C eax
-        push dword ptr [esp + 0x20]                      // return address
-        push dword ptr [esp + 0x1C]                      // ecx (viewer)
-        push dword ptr [esp + 0x0C]                      // esi
-        push dword ptr [esp + 0x0C]                      // edi
-        push dword ptr [esp + 0x20]                      // ebx
-        push dword ptr [esp + 0x1C]                      // ebp
-        call note_show
-        add esp, 24
-        popad
-        mov eax, 0x12D2D0
-        jmp eax
-    }
-}
-
-static void install_preview_marker()
-{
-    for (DWORD s : k_show_sites) {
-        BYTE *c = (BYTE *)s;
-        if (c[0] == 0xE8 && s + 5 + *(int32_t *)(c + 1) == 0x12D2D0)
-            *(int32_t *)(c + 1) = (int32_t)((DWORD)show_stub - (s + 5));
-        else
-            port_log("prof: show site %06X not as expected\n", s);
-    }
-    for (DWORD s : k_cache_sites) {
-        BYTE *c = (BYTE *)s;
-        if (c[0] == 0xE8 && s + 5 + *(int32_t *)(c + 1) == 0x12CAE0)
-            *(int32_t *)(c + 1) = (int32_t)((DWORD)cache_add_logged - (s + 5));
-        else
-            port_log("prof: cache site %06X not as expected\n", s);
-    }
-    BYTE *p = (BYTE *)0x1188BE;
-    if (p[0] != 0xE8 || 0x1188BE + 5 + *(int32_t *)(p + 1) != 0x512D0) {
-        port_log("prof: preview marker not installed (unexpected call at 1188BE)\n");
-        return;
-    }
-    *(int32_t *)(p + 1) = (int32_t)((DWORD)preview_load - (0x1188BE + 5));
-}
-
 static DWORD WINAPI profiler_thread(LPVOID param)
 {
     HANDLE t = (HANDLE)param;
@@ -1033,7 +922,6 @@ static DWORD WINAPI profiler_thread(LPVOID param)
         if (frame.size() < 4096)
             frame.push_back({key, first});
         port_io_burst_poll();
-        preview_poll();
         if (GetTickCount() - last_report >= 10000 && slow_samples) {
             last_report = GetTickCount();
             auto top = [](std::unordered_map<uint32_t, uint32_t> &m, int n) {
@@ -1306,7 +1194,6 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
         SetThreadPriority(pt, THREAD_PRIORITY_HIGHEST);
         CloseHandle(pt);
         port_log("debug: main-thread sampling profiler on (prof: lines every 10 s)\n");
-        install_preview_marker();
     }
     // watchdog: while the game thread runs, dump where every game thread is every 6 s
     for (DWORD tick = 0; WaitForSingleObject(t, 50) == WAIT_TIMEOUT;) {

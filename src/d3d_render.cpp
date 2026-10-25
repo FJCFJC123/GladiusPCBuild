@@ -464,6 +464,13 @@ void d3d_texture_dirty(XPixelContainer *t)
         it->second.dirty = true;
 }
 
+// Every cached texture at this address, whatever its format / size.
+void d3d_texture_dirty_data(DWORD data)
+{
+    for (auto it = g_tex_cache.lower_bound({data, 0, 0}); it != g_tex_cache.end() && it->first.data == data; ++it)
+        it->second.dirty = true;
+}
+
 static UINT swizzle_offset(UINT x, UINT y, UINT w, UINT h)
 {
     UINT off = 0, bit = 1;
