@@ -426,6 +426,8 @@ static void __cdecl pad_poll_hook()
     port_pads_override(g_pads);
     void port_codes_frame();                            // codes.cpp: per-frame gameplay codes (money, JP)
     port_codes_frame();
+    void port_mods_frame();                             // mods.cpp: live items.tok / skills.tok reloads
+    port_mods_frame();
     ((void(__cdecl *)())0x183360)();
     void port_godcam_frame();                           // godcam.cpp: fly the God Camera with this frame's pads
     port_godcam_frame();

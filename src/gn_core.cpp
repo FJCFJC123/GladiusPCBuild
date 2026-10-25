@@ -189,6 +189,7 @@ static uint32_t *const PICK_INIT = (uint32_t *)0x3945A8;
 static uint8_t g_savePickFixed;
 
 static bool g_detOn;                // deterministic mode (det_enter .. det_leave)
+bool gn_det_active() { return g_detOn; }   // mods.cpp: no live config reloads during a session / replay
 
 void det_enter(GnCtx *c)
 {
