@@ -7,7 +7,7 @@ adds are written, under <out dir>/data/, ready to copy into the game's data fold
   - text / config / scripts (.tok .tint .enc .scb .idx .bin .brf .pak ...) and animations (.pan): the mod's file as is.
     The vanilla GC and Xbox copies of these match byte for byte (13045 of 13045 .pan files; text differs only in
     comments), so a GC mod file means the same on the Xbox engine.
-  - models / textures (.pax .ptx .tga) the mod copied from another vanilla file (a byte copy, renamed): the Xbox
+  - models / textures (.pax .pao .ptx .tga) the mod copied from another vanilla file (a byte copy, renamed): the Xbox
     copy of that source file, read from gladius.bec.
   - textures with new content: GC formats 0x2000 (CMPR) / 0x2200 (CMPR colour + CMPR alpha in green) are decoded and
     re-encoded as Xbox DXT1 / DXT5 in the same PTTP layout. Other new models are reported, not written.
@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ptx  # noqa: E402  (DXT encoder)
 
-COPY_FROM_XBOX = {'.pax', '.ptx', '.tga'}           # platform-specific: never take the GC bytes
+COPY_FROM_XBOX = {'.pax', '.pao', '.ptx', '.tga'}   # platform-specific: never take the GC bytes
 SKIP_EXT = {'.scp', '.bak', '.bat'}
 
 
