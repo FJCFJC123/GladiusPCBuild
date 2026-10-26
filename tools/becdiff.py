@@ -1,6 +1,6 @@
 """Change list of a GameCube Gladius mod, from its gladius.bec against the vanilla one.
 
-    python tools/becdiff.py <vanilla gladius.bec> <mod gladius.bec> <out dir> [--names <data dir> ...]
+    python tools/becdiff.py <vanilla gladius.bec> <mod gladius.bec> <out dir> [--xbox <xbox gladius.bec>] [--names <data dir> ...]
 
 A bec stores no file names, only a hash of each path (CRC32 table, no xors, lower-case "data/..."), so an unpack
 names only the files its name list knows and writes the rest as numbered .bin files - which a copied data folder then
@@ -12,9 +12,14 @@ Candidate names: every file under the --names data folders (vanilla and the mod'
 and mesh in the mod's config/classdefs.tok and every character folder, <set>/<set>_<anim>.pan for every animation
 name vanilla uses and every SKILLANIM / anim name in the mod's skills.tok, plus the model, texture and variant names.
 Entries still unnamed are written as data/_unnamed/<hash>.<kind> and listed (kind from the content).
-Report: <out dir>/becdiff_report.txt (added / changed / unnamed, size, name).
+Unnamed additions with the bytes of a vanilla entry are a repack tool's duplicates of vanilla files it could not name
+(listed as duplicate, not written). With --xbox, files byte-identical to the Xbox file of the same name are skipped
+entirely (not listed, not written): a mod's base can carry Xbox-only files (Leo's mod: every <set>_basepose.pan), which
+the port already has.
+Report: <out dir>/becdiff_report.txt (added / changed / unnamed / duplicate / removed, size, name).
 """
 import collections
+import hashlib
 import os
 import re
 import struct
@@ -38,7 +43,7 @@ def path_hash(name):
 
 class Bec:
     """gladius.bec: ' ceb', u16 version, u16 alignment, u32 count, u32 ?, then 16-byte entries
-    (u32 path hash, u32 offset, u32 stored size: 0 = raw, top bit = duplicate; u32 size). zlib data starts 0x78."""
+    (u32 path hash, u32 offset, u32 flags << 24 | stored size (0 = raw); u32 size). zlib data starts 0x78."""
 
     def __init__(self, path):
         self.f = open(path, 'rb')
@@ -50,7 +55,7 @@ class Bec:
         self.ents = {}
         for i in range(n):
             h, off, st, sz = struct.unpack_from('<4I', raw, i * 16)
-            self.ents[h] = (off, st & 0x7FFFFFFF, sz)
+            self.ents[h] = (off, st & 0xFFFFFF, sz)        # top byte: flags (GC 0x02 on raw entries)
 
     def get(self, h):
         off, st, sz = self.ents[h]
@@ -186,6 +191,10 @@ def main():
     if '--names' in argv:
         i = argv.index('--names')
         name_dirs, argv = argv[i + 1:], argv[:i]
+    xbox = None
+    if '--xbox' in argv:
+        i = argv.index('--xbox')
+        xbox, argv = Bec(argv[i + 1]), argv[:i] + argv[i + 2:]
     if len(argv) != 3:
         raise SystemExit(__doc__)
     van, mod, out = Bec(argv[0]), Bec(argv[1]), argv[2]
@@ -195,16 +204,37 @@ def main():
         d = mod.get(h)
         if h in van.ents and van.get(h) == d:
             continue
+        if xbox and h in xbox.ents and xbox.get(h) == d:   # an Xbox file the mod's base carried over: already ported
+            continue
         diff[h] = d
     unnamed = [h for h in diff if h not in names]
     if unnamed:
         print(f'{len(unnamed)} unnamed after the candidate names - searching every folder ...')
         names.update(deep_names(unnamed, names, diff))
+    # A repack tool that could not name some vanilla entries stores them again under a hash of its own made-up name
+    # (Leo's mod: 232 of vanilla's 241 nameless entries): an unnamed addition with the bytes of a vanilla entry is
+    # that duplicate, not new content - reported, not written.
+    dup = {}
+    left = [h for h in diff if h not in van.ents and h not in names]
+    if left:
+        sizes = {mod.ents[h][2] for h in left}
+        by_md5 = {}
+        for vh, (_, _, sz) in van.ents.items():
+            if sz in sizes:
+                by_md5.setdefault(hashlib.md5(van.get(vh)).digest(), vh)
+        for h in left:
+            vh = by_md5.get(hashlib.md5(diff[h]).digest())
+            if vh is not None:
+                dup[h] = vh
     rows, stats = [], collections.Counter()
     for h, d in diff.items():
         new = h not in van.ents
         name = names.get(h)
         status = 'added' if new else 'changed'
+        if h in dup:
+            stats['duplicate of vanilla'] += 1
+            rows.append(f'duplicate\t{h:08X}\t{len(d)}\tcopy of vanilla {dup[h]:08X} {names.get(dup[h], "(unnamed)")}')
+            continue
         if name:
             rel = name[len('data/'):]
         else:

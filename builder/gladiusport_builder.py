@@ -250,6 +250,71 @@ class Builder:
                                               + mode.encode() + b'\r\n')
         self.log("Settings: gladiusport.ini, gladiusnet.ini" + ("" if release else " (+ autotest launchers)"))
 
+    # ------------------------------------------------------------------ mods
+    def apply_mod(self):
+        """Mods tab: one mod (a folder of xdelta patches laid out like the install: gladius.bec.xdelta,
+        data\\Audio\\...\\X.FLO.xdelta) applied to the install. The originals are kept in mods_backup\\ and put back
+        before another mod (or none) is applied, so switching always starts from the unmodded files."""
+        name = self.opt.get("mod")                           # None (CLI without --mod): leave the install as it is
+        if name is None:
+            return
+        backup = self.out / MOD_BACKUP
+        state_file = backup / "mod.json"
+        try:
+            state = json.loads(state_file.read_text())
+        except (OSError, ValueError):
+            state = {"mod": "", "files": []}
+        patches = []
+        if name:
+            folder = Path(self.opt.get("xdelta_dir") or "") / name
+            patches = sorted(folder.rglob("*.xdelta")) if folder.is_dir() else []
+            if not patches:
+                raise RuntimeError(f"No .xdelta patches in {folder}")
+        for rel in state["files"]:                           # back to the original files (a Build may have
+                                                             # re-extracted some already: same bytes)
+            src = backup / rel
+            if src.exists():
+                shutil.copyfile(src, self.out / rel)
+                src.unlink()
+        if state["files"]:
+            self.log(f"Mod removed: {state['mod']} ({len(state['files'])} files restored)")
+        if not name:
+            shutil.rmtree(backup, ignore_errors=True)
+            return
+        state = {"mod": "", "files": []}
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state))
+        vcdiff = importlib.import_module("vcdiff")
+        self.log(f"Applying mod: {name} ({len(patches)} patches)")
+        try:
+            for i, p in enumerate(patches):
+                self.check()
+                rel = p.relative_to(folder).with_suffix("").as_posix()
+                target = self.out / rel
+                if not target.exists():
+                    raise RuntimeError(f"{name}: {rel} is not in the install (patch {p.name})")
+                orig = backup / rel
+                orig.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(target, orig)
+                state["files"].append(rel)
+                state_file.write_text(json.dumps(state))
+                try:
+                    vcdiff.apply(str(orig), str(p), str(target))
+                except vcdiff.PatchError as e:
+                    raise RuntimeError(f"{name}: {rel}: {e}") from None
+                self.log(f"  patched {rel}")
+                self.progress(i + 1, len(patches), "mod")
+        except BaseException:
+            for rel in state["files"]:                       # leave the install unmodded, not half patched
+                if (backup / rel).exists():
+                    shutil.copyfile(backup / rel, self.out / rel)
+                    (backup / rel).unlink()
+            state_file.write_text(json.dumps({"mod": "", "files": []}))
+            raise
+        state["mod"] = name
+        state_file.write_text(json.dumps(state))
+        self.log(f"Mod applied: {name} (originals kept in {MOD_BACKUP}\\ - choose None to remove it)")
+
     # ------------------------------------------------------------------ run
     def run(self, update=False):
         xbe2pe, xiso = load_tools()
@@ -265,6 +330,7 @@ class Builder:
         self.verify_xbe()
         self.convert(xbe2pe)
         self.write_settings()
+        self.apply_mod()
         (self.out / BUILD_MARKER).write_text("GladiusPort install created by GladiusPort Builder\n")
         self.log(f"Done. Play: {self.out / 'gladius.exe'}")
 
@@ -283,6 +349,24 @@ CODES = [
     ("Unlock20Slots", "All 20 school slots unlocked from the start", "Roster40"),
 ]
 CODES_ORDER = {k: i for i, (k, _, _) in enumerate(CODES)}
+
+# Mods tab: the install's originals of the files a mod's patches change, and mod.json (which mod, which files)
+MOD_BACKUP = "mods_backup"
+
+
+def list_mods(xdelta_dir):
+    """The mods in an Xdelta folder: its subfolders that hold .xdelta patches"""
+    try:
+        return sorted(d.name for d in Path(xdelta_dir).iterdir() if d.is_dir() and any(d.rglob("*.xdelta")))
+    except OSError:
+        return []
+
+
+def installed_mod(out):
+    try:
+        return json.loads((Path(out) / MOD_BACKUP / "mod.json").read_text()).get("mod", "")
+    except (OSError, ValueError):
+        return ""
 
 
 def set_ini(path, section, key, value):
@@ -455,6 +539,8 @@ def cli(argv):
     ap.add_argument("--detect", action="store_true", help="Only show the detected hardware and its preset")
     ap.add_argument("--codes", help="Comma list of gameplay codes to turn on ('none' = all off): "
                     + ", ".join(k for k, _, _ in CODES))
+    ap.add_argument("--xdelta-dir", help="Xdelta folder: one subfolder of .xdelta patches per mod")
+    ap.add_argument("--mod", help="Mod (subfolder of --xdelta-dir) to apply, 'none' = remove the applied mod")
     a = ap.parse_args(argv)
     if a.detect:
         print("Hardware: " + describe_hardware(detect_hardware()))
@@ -482,6 +568,11 @@ def cli(argv):
         if bad:
             sys.exit("unknown code(s): " + ", ".join(bad))
         opts["codes"] = codes
+    if a.mod is not None:
+        mod = "" if a.mod.strip().lower() == "none" else a.mod.strip()
+        if mod and mod not in list_mods(a.xdelta_dir or ""):
+            sys.exit(f"no mod '{mod}' in --xdelta-dir (mods: {', '.join(list_mods(a.xdelta_dir or '')) or 'none'})")
+        opts["mod"], opts["xdelta_dir"] = mod, a.xdelta_dir
     Builder(a.source, a.out, opts, progress=progress).run(update=a.update)
 
 
@@ -617,6 +708,51 @@ def gui():
             v_codes[x].set(False)
     code_sync()
 
+    # Mods tab: the subfolders of an Xdelta folder (one mod each, patches laid out like the install); one mod at a time
+    mtab = ttk.Frame(nb, padding=8)
+    mtab.columnconfigure(1, weight=1)
+    nb.add(mtab, text="Mods")
+    v_xd = tk.StringVar(value=settings.get("xdelta_dir", str(Path.home() / "Desktop" / "Xdelta")))
+    v_mod = tk.StringVar(value=settings.get("mod", ""))
+    ttk.Label(mtab, text="GameCube mods ported to the Xbox data, applied as xdelta patches on Build or Update exe. "
+              "One mod at a time: the original files are kept and put back before another mod (or None) is applied.",
+              wraplength=600).grid(row=0, column=0, columnspan=3, sticky="w")
+    ttk.Label(mtab, text="Online versus: both players need the same mod.", foreground="#555").grid(
+        row=1, column=0, columnspan=3, sticky="w", pady=(0, 6))
+    ttk.Label(mtab, text="Xdelta folder").grid(row=2, column=0, sticky="w")
+    ttk.Entry(mtab, textvariable=v_xd).grid(row=2, column=1, sticky="ew", padx=6)
+    mlist = ttk.LabelFrame(mtab, text="Mod", padding=8)
+    mlist.grid(row=3, column=0, columnspan=3, sticky="ew", pady=8)
+    m_info = ttk.Label(mtab, foreground="#555")
+    m_info.grid(row=4, column=0, columnspan=3, sticky="w")
+
+    def mods_refresh(*_):
+        for w in mlist.winfo_children():
+            w.destroy()
+        mods = list_mods(v_xd.get().strip())
+        if v_mod.get() and v_mod.get() not in mods:
+            v_mod.set("")
+        ttk.Radiobutton(mlist, text="None (unmodded game)", value="", variable=v_mod).grid(row=0, column=0, sticky="w")
+        for i, m in enumerate(mods):
+            n = sum(1 for _ in (Path(v_xd.get().strip()) / m).rglob("*.xdelta"))
+            ttk.Radiobutton(mlist, text=f"{m}  ({n} patch{'es' if n != 1 else ''})", value=m, variable=v_mod).grid(
+                row=1 + i, column=0, sticky="w", pady=1)
+        if not mods:
+            ttk.Label(mlist, text="No mods found - the Xdelta folder needs one subfolder of .xdelta patches per mod.",
+                      foreground="#555").grid(row=1, column=0, sticky="w")
+        cur = installed_mod(v_out.get().strip())
+        m_info.configure(text=f"Installed now: {cur or 'none'}")
+
+    def pick_xd():
+        p = filedialog.askdirectory(title="Xdelta folder (one subfolder per mod)")
+        if p:
+            v_xd.set(os.path.normpath(p))
+            mods_refresh()
+
+    ttk.Button(mtab, text="Browse...", command=pick_xd).grid(row=2, column=2, sticky="ew")
+    ttk.Button(mtab, text="Refresh", command=mods_refresh).grid(row=5, column=2, sticky="e", pady=(6, 0))
+    mods_refresh()
+
     bar = ttk.Progressbar(frm, maximum=1000)
     bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 0))
     logw = tk.Text(frm, height=12, state="disabled", wrap="word")
@@ -661,7 +797,8 @@ def gui():
         return {"dev_menus": v_dev.get(), "unlock_versus": v_vs.get(), "console": v_con.get(),
                 "editor": v_edit.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
                 "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip(),
-                "codes": [k for k, _, _ in CODES if v_codes[k].get()]}
+                "codes": [k for k, _, _ in CODES if v_codes[k].get()],
+                "mod": v_mod.get(), "xdelta_dir": v_xd.get().strip()}
 
     def save():
         s = {"source": v_src.get(), "out": v_out.get(), **opts()}
