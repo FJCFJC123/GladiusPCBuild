@@ -137,10 +137,9 @@ GladiusPort stands on tools and research by others. Thank you to all of them.
 - **[JIMB16](https://github.com/JIMB16/Gladius)** and **[xexuxjy](https://github.com/xexuxjy/Gladius)**: Gladius
   BEC archive tools and model, texture and level format research.
 - The **Gladius modding community**: PAX/PTX/PAO converters documenting the asset formats.
-- **FlynnyFoo** and **Espiral**: the Xbox 720p patch, which mapped the engine's hard-coded 640×480.
-- **FlynnyFoo**: the Xbox HD texture pack (inspired by **Swift's Dolphin Texture Remaster**) the texture loader
+- **Espiral**: for help on the Xbox 720p patch, which mapped the engine's hard-coded 640×480.
+- The Xbox HD texture pack (inspired by **Swift's Dolphin Texture Remaster**) the texture loader
   was built around.
-- **Protius**, LucasArts' early-development PC build of Gladius: the map of the engine.
 
 ***Gladius*** was developed and published by **LucasArts** (2003).
 
