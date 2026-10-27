@@ -1,6 +1,6 @@
 # GladiusPort
 
-**A native Windows port of *Gladius* (LucasArts, 2003), built from the retail Xbox executable.**
+**A  Windows port of *Gladius* (LucasArts, 2003), built from the retail Xbox executable.**
 
 GladiusPort converts the Xbox `default.xbe` into a Windows `.exe`. The game's original x86 code runs natively on
 the PC, with no CPU emulation. Everything the Xbox provided around the game (its kernel, Direct3D 8, DirectSound
@@ -18,7 +18,7 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 
 ## Features
 
-- **Native PC port** of the Xbox release: the original game code runs natively, unchanged.
+- **PC port** of the Xbox release: the original game code runs natively, unchanged.
 - **Any resolution and widescreen** (4:3, 16:9, 21:9), resizable window and borderless fullscreen.
 - **Modern renderer**:
   - HDR;
