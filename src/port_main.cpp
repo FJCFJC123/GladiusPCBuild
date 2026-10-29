@@ -518,6 +518,9 @@ struct DumpJob {
 
 // [debug] CrashDump: 0 off, 1 normal (default: stacks, module data, referenced memory and the game heap arenas - a
 // few hundred MB), 2 full memory (1.5-2 GB: also textures, the 512 MB physical arena and D3D memory).
+// Release builds write no dumps or crash reports at all, and leave no exception to Windows Error Reporting (which
+// would write its own): a dump holds process memory - netplay's build secret and match keys among it. The crash is
+// in port.log (crash_handler: code, address, registers, return addresses).
 static int g_dump_mode = 1;
 
 // normal dumps: add the game's own heap (container main + local arenas, up to their high-water marks)
@@ -576,6 +579,10 @@ static DWORD WINAPI dump_writer(LPVOID p)
 
 static void write_dump(const char *why, EXCEPTION_POINTERS *ep)
 {
+    if (PORT_RELEASE) {
+        port_log("dump: none in release builds (%s)\n", why);
+        return;
+    }
     static char done[8][24];
     static SRWLOCK lock = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&lock);
@@ -647,6 +654,7 @@ void port_write_dump(const char *why) { write_dump(why, nullptr); }
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep)
 {
     write_dump("crash", ep);
+    if (PORT_RELEASE) TerminateProcess(GetCurrentProcess(), ep->ExceptionRecord->ExceptionCode);   // no WER dump
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -795,6 +803,13 @@ static void __cdecl on_abort(int)
 {
     log_callers("ABORT called");
     write_dump("abort", nullptr);
+    if (PORT_RELEASE) TerminateProcess(GetCurrentProcess(), 3);   // before abort's fast-fail reaches WER
+}
+
+static void __cdecl on_invalid_parameter(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t)
+{
+    log_callers("CRT INVALID PARAMETER");
+    TerminateProcess(GetCurrentProcess(), 3);
 }
 
 static void __cdecl on_purecall()
@@ -1008,6 +1023,10 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     signal(SIGABRT, on_abort);                          // abort() ends in a fast-fail no handler sees: log it first
     _set_purecall_handler(on_purecall);
     SetUnhandledExceptionFilter(unhandled_filter);
+    if (PORT_RELEASE) {                                 // no WER report / dump on the CRT's own fatal paths either
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _set_invalid_parameter_handler(on_invalid_parameter);
+    }
     g_port_info = info;
     port_init_heap();
     port_init_files();
