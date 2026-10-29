@@ -612,7 +612,7 @@ def cli(argv):
     ap.add_argument("--console", action="store_true", help="Keep a console window next to the game")
     ap.add_argument("--editor", action="store_true", help="Also install gladius_editor.exe (level editor)")
     ap.add_argument("--devtools", action="store_true", help="Developer tools (modders / devs, off by default): console, graphs, "
-                    "crash reports, script debugger (+ Python check for its source view)")
+                    "script debugger (+ Python check for its source view)")
     ap.add_argument("--texture-pack", help="HD texture pack folder (<texture name>.png files)")
     ap.add_argument("--name", help="Player name for online versus")
     ap.add_argument("--relay", help=f"Online relay host:port (default {DEFAULT_RELAY})")
@@ -752,7 +752,7 @@ def gui():
     ttk.Checkbutton(box, text="Level editor (gladius_editor.exe: props, meshes, levels, battle grid)",
                     variable=v_edit).grid(row=3, column=0, columnspan=2, sticky="w")
     if has_devtools:                                     # builders made by build_exe.bat bundle them
-        ttk.Checkbutton(box, text="Developer tools (console, graphs, crash reports, script debugger; "
+        ttk.Checkbutton(box, text="Developer tools (console, graphs, script debugger; "
                         "script source needs Python 3)", variable=v_devtools).grid(row=2, column=0, columnspan=2,
                                                                                   sticky="w")
     ttk.Label(box, text="Online name").grid(row=4, column=0, sticky="w", pady=(6, 0))
