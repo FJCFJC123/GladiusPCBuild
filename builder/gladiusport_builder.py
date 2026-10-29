@@ -193,6 +193,10 @@ class Builder:
         set_ini(ini, "game", "UnlockVersus", "1" if self.opt.get("unlock_versus", True) else "0")
         set_ini(ini, "game", "DevMenus", "1" if self.opt.get("dev_menus") else "0")
         set_ini(ini, "game", "UnlockArenas", "1")          # all 15 versus arenas (must match across netplay PCs)
+        vol = self.opt.get("volume")                        # None (CLI without --volume): leave [audio] as it is
+        if vol is not None:
+            set_ini(ini, "audio", "Volume", str(max(0, min(100, int(vol)))))
+            self.log(f"Master volume: {max(0, min(100, int(vol)))}%")
         codes = self.opt.get("codes")                       # None (CLI without --codes): leave [codes] as it is
         if codes is not None:
             on = [k for k, _, _ in CODES if k in codes]
@@ -540,6 +544,7 @@ def cli(argv):
     ap.add_argument("--detect", action="store_true", help="Only show the detected hardware and its preset")
     ap.add_argument("--codes", help="Comma list of gameplay codes to turn on ('none' = all off): "
                     + ", ".join(k for k, _, _ in CODES))
+    ap.add_argument("--volume", type=int, help="Master volume 0-100 (default in game: 40)")
     ap.add_argument("--xdelta-dir", help="Xdelta folder: one subfolder of .xdelta patches per mod")
     ap.add_argument("--mod", help="Mod (subfolder of --xdelta-dir) to apply, 'none' = remove the applied mod")
     a = ap.parse_args(argv)
@@ -562,7 +567,7 @@ def cli(argv):
 
     opts = {"dev_menus": not a.no_dev_menus, "unlock_versus": not a.no_unlock_versus, "console": a.console,
             "editor": a.editor, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset,
-            "texture_pack": a.texture_pack}
+            "texture_pack": a.texture_pack, "volume": a.volume}
     if a.codes is not None:
         codes = [] if a.codes.strip().lower() == "none" else [c.strip() for c in a.codes.split(",") if c.strip()]
         bad = [c for c in codes if c not in CODES_ORDER]
@@ -604,6 +609,7 @@ def gui():
     v_name = tk.StringVar(value=settings.get("player_name", socket.gethostname()[:15]))
     v_relay = tk.StringVar(value=settings.get("relay", DEFAULT_RELAY))
     v_pack = tk.StringVar(value=settings.get("texture_pack", ""))
+    v_vol = tk.IntVar(value=settings.get("volume", 40))
     hw = detect_hardware()
     preset_choices = {"Automatic (new install: recommended, else keep)": None,
                       f"Recommended for this PC ({hw['tier'].capitalize()})": "recommended",
@@ -679,6 +685,17 @@ def gui():
     ttk.Button(fpack, text="Browse...", command=pick_pack).grid(row=0, column=1, padx=(4, 0))
     ttk.Label(box, text="Optional: folder of upscaled <texture name>.png files. Empty = keep the current setting.",
               foreground="#555").grid(row=9, column=0, columnspan=2, sticky="w")
+    ttk.Label(box, text="Master volume").grid(row=10, column=0, sticky="w", pady=(6, 0))
+    fvol = ttk.Frame(box)
+    fvol.grid(row=10, column=1, sticky="w", padx=6, pady=(6, 0))
+    vol_lbl = ttk.Label(fvol, width=5)
+    ttk.Scale(fvol, from_=0, to=100, length=220, command=lambda v: (v_vol.set(int(float(v))),
+              vol_lbl.configure(text=f"{v_vol.get()}%"))).pack(side="left")
+    fvol.winfo_children()[0].set(v_vol.get())
+    vol_lbl.configure(text=f"{v_vol.get()}%")
+    vol_lbl.pack(side="left", padx=(6, 0))
+    ttk.Label(box, text="Game audio is mastered loud; 40% is about the level of other programs. Windows volume applies "
+              "on top.", foreground="#555").grid(row=11, column=0, columnspan=2, sticky="w")
 
 
     # Codes tab: one box per ported Gecko code; a box whose partner is ticked is greyed out
@@ -799,7 +816,7 @@ def gui():
                 "editor": v_edit.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
                 "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip(),
                 "codes": [k for k, _, _ in CODES if v_codes[k].get()],
-                "mod": v_mod.get(), "xdelta_dir": v_xd.get().strip()}
+                "mod": v_mod.get(), "xdelta_dir": v_xd.get().strip(), "volume": v_vol.get()}
 
     def save():
         s = {"source": v_src.get(), "out": v_out.get(), **opts()}

@@ -399,6 +399,11 @@ void dsound_audio_stats(uint32_t out[3])
     out[2] = (uint32_t)InterlockedExchange(&g_stat_starve, 0);
 }
 
+// [audio] Volume=0..100 (default 40): master volume of the whole mix. The Xbox mix (and the intro movies, which play
+// before any in-game volume option) is mastered at full scale - much louder than other programs at the same Windows
+// volume. Windows still applies its own master / per-app volume on top (shared-mode WASAPI).
+static float g_master = 0.4f;
+
 static void mix(float *out, UINT frames)
 {
     memset(out, 0, frames * 2 * sizeof(float));
@@ -494,6 +499,7 @@ static void mix(float *out, UINT frames)
                          probe[k].gain, probe[k].raw, probe[k].raw * probe[k].gain, probe[k].pinned, probe[k].read);
     }
     limit(out, frames);
+    for (UINT i = 0; i < frames * 2; i++) out[i] *= g_master;
 }
 
 // ------------------------------------------------------------------------------------------------ output
@@ -506,6 +512,9 @@ static void record_init()
     char ini[MAX_PATH], val[32];
     GetModuleFileNameA(nullptr, ini, MAX_PATH);
     strcpy(strrchr(ini, 0x5C) + 1, port_ini_name());
+    UINT vol = GetPrivateProfileIntA("audio", "Volume", 40, ini);
+    g_master = (vol > 100 ? 100 : vol) / 100.0f;
+    port_log("audio: master volume %u%%\n", vol > 100 ? 100 : vol);
     GetPrivateProfileStringA("debug", "RecordAudio", "", val, sizeof val, ini);
     DWORD secs = strtoul(val, nullptr, 10);
     if (!secs)
