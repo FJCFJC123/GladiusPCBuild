@@ -127,6 +127,9 @@ static void toggle_borderless(HWND h)
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
+    bool port_devtools_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp);   // devtools_host.cpp: console keys
+    if (port_devtools_wndproc(h, msg, wp, lp))
+        return 0;
     switch (msg) {
     case WM_HANDOFF_SHOW:                               // soft reboot: first frame drawn - take over from the old window
         ShowWindow(h, g_handoff_show);
@@ -1034,6 +1037,7 @@ void d3d_present()
         overlay_draw();
     }
     screenshot_if_requested();
+    prof_frame_close_gpu();                             // before Present: its commands go out with this frame
     {
         ProfScope ps(PZ_PRESENT);
         g_d3d.swap->Present(1, 0);
@@ -1052,6 +1056,9 @@ void d3d_present()
     if (prev_end.QuadPart) {
         double cpu = (t0.QuadPart - prev_end.QuadPart) * 1000.0 / qpf.QuadPart;
         double pres = (t1.QuadPart - t0.QuadPart) * 1000.0 / qpf.QuadPart;
+        g_prof_last.wall_ms = (float)((t1.QuadPart - prev_end.QuadPart) * 1000.0 / qpf.QuadPart);   // devtools graphs
+        g_prof_last.cpu_ms = (float)cpu, g_prof_last.present_ms = (float)pres, g_prof_last.draws = g_d3d.draws;
+        g_prof_last.frame = g_d3d.frame;
         cpu_sum += cpu, pres_sum += pres, draw_sum += g_d3d.draws, timed++;
         if (cpu > cpu_max) cpu_max = cpu;
         if (pres > pres_max) pres_max = pres;

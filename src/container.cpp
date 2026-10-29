@@ -37,6 +37,9 @@ struct Arena {
     volatile LONG failed;                               // allocations that did not fit (logged once)
     volatile LONG hi;                                   // high-water mark: end of the highest block ever handed out
     size_t peak;                                        // most in use at any report (container_report)
+    volatile LONG used;                                 // bytes in use (usable sizes), for the devtools graphs;
+                                                        // re-read exactly at each container_report (a netplay state
+                                                        // sync replaces the blocks under it)
     bool warned;                                        // past 75% (logged once)
 };
 // Arena layout (statesync.cpp reads it through container_arena). Below 2 GB everything stays in 0x20000000-0x30000000,
@@ -244,6 +247,11 @@ static void full(Arena &a, size_t size)
 }
 
 // Tag a new block and raise the arena's high-water mark.
+static void used_add(Arena &a, const void *p, int sign)
+{
+    InterlockedExchangeAdd(&a.used, sign * (LONG)mspace_usable_size(p));
+}
+
 static void note(Arena &a, const void *p, size_t size)
 {
     tag_add(p, size);
@@ -260,6 +268,19 @@ bool container_arena(int arena, uintptr_t *base, size_t *size)
         return false;
     *base = g_arenas[arena].base;
     *size = g_arenas[arena].size;
+    return true;
+}
+
+// Live usage for the devtools graphs (any thread).
+bool container_usage(int arena, const char **name, size_t *size, size_t *used, size_t *hwm, long *failed)
+{
+    if (!g_on || arena < 0 || arena >= CTR_ARENAS)
+        return false;
+    const Arena &a = g_arenas[arena];
+    *name = a.name, *size = a.size;
+    *used = a.used > 0 ? (size_t)a.used : 0;
+    *hwm = a.hi ? (uintptr_t)(ULONG)a.hi - a.base : 0;
+    *failed = a.failed;
     return true;
 }
 
@@ -288,6 +309,7 @@ void *ctr_alloc(size_t size, bool zero)
     (void)zero;
     memset(p, 0, size);
     note(a, p, size);
+    used_add(a, p, 1);
     return p;
 }
 
@@ -299,7 +321,7 @@ void *ctr_phys_alloc(size_t size, size_t align)
     if (!p)
         full(a, size);
     else
-        note(a, p, size);
+        note(a, p, size), used_add(a, p, 1);
     return p;
 }
 
@@ -310,6 +332,7 @@ void ctr_free(void *p)
     int i = arena_of(p);
     if (i >= 0) {
         tag_remove(p);
+        used_add(g_arenas[i], p, -1);
         mspace_free(g_arenas[i].ms, p);
     }
 }
@@ -322,6 +345,7 @@ void *ctr_realloc(void *p, size_t size, bool zero, bool in_place_only)
     size_t old = mspace_usable_size(p);
     if (size <= old) {                                  // shrink in place, like the Xbox heap (see xapi_heap.cpp)
         mspace_realloc_in_place(g_arenas[i].ms, p, size ? size : 1);
+        InterlockedExchangeAdd(&g_arenas[i].used, (LONG)mspace_usable_size(p) - (LONG)old);
         tag_resize(p, size);
         return p;                                       // if it could not split, the block just stays larger
     }
@@ -334,6 +358,7 @@ void *ctr_realloc(void *p, size_t size, bool zero, bool in_place_only)
     }
     (void)zero;                                         // grown part zeroed, same reason as ctr_alloc
     memset((char *)n + old, 0, size - old);
+    InterlockedExchangeAdd(&g_arenas[i].used, (LONG)mspace_usable_size(n) - (LONG)old);
     if (n != p)
         tag_remove(p);
     note(g_arenas[i], n, size);
@@ -349,6 +374,7 @@ void container_report()
         struct mallinfo mi = mspace_mallinfo(a.ms);
         if ((size_t)mi.uordblks > a.peak)
             a.peak = mi.uordblks;
+        InterlockedExchange(&a.used, (LONG)mi.uordblks);
         port_log("container: %-4s in use %6.2f MB of %3u MB, peak %6.2f MB (%u free chunks)%s\n", a.name,
                  mi.uordblks / 1048576.0, (unsigned)(a.size >> 20), a.peak / 1048576.0, (unsigned)mi.ordblks,
                  a.failed ? " - OVERFLOWED" : "");
@@ -373,6 +399,7 @@ void *game_alloc(size_t size, bool zero)
             if (zero)
                 memset(p, 0, size);
             note(g_arenas[CTR_MAIN], p, size);
+            used_add(g_arenas[CTR_MAIN], p, 1);
             return p;
         }
         full(g_arenas[CTR_MAIN], size);
@@ -387,6 +414,7 @@ void *game_alloc_local(size_t size)
         if (void *p = mspace_malloc(g_arenas[CTR_LOCAL].ms, size ? size : 1)) {
             memset(p, 0, size);
             note(g_arenas[CTR_LOCAL], p, size);
+            used_add(g_arenas[CTR_LOCAL], p, 1);
             tag_add(p, size, true);                     // overrides the tag note() just wrote
             return p;
         }

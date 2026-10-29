@@ -358,7 +358,7 @@ struct ReadTimer {
     ReadTimer(DWORD bytes, const OVERLAPPED *ov) : n(bytes), off(ov ? ov->Offset : 0)
     {
         InterlockedExchangeAdd64(&g_port_read_bytes, bytes);
-        if (!g_prof_on) return;
+        if (!g_prof_report) return;                      // [debug] Profile only, not the devtools live profiler
         port_uptime_ms();                                // sets the base / frequency once
         LARGE_INTEGER t;
         QueryPerformanceCounter(&t);

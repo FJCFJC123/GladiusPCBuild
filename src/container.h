@@ -24,6 +24,8 @@ void *ctr_realloc(void *p, size_t size, bool zero, bool in_place_only);   // shr
 void container_report();                        // usage per arena (log)
 // an arena's whole reserved range; false when off
 bool container_arena(int arena, uintptr_t *base, size_t *size);
+// live usage of an arena (devtools graphs); false when off
+bool container_usage(int arena, const char **name, size_t *size, size_t *used, size_t *hwm, long *failed);
 // [base, high-water mark) of an arena; false when off
 bool container_range(int arena, uintptr_t *base, uintptr_t *end);
 // live block tags (size + allocating game stack)

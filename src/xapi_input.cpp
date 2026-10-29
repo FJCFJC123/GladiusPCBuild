@@ -261,7 +261,9 @@ static void read_port(DWORD port, XGamepad *g)
         g->sThumbRX = s.Gamepad.sThumbRX;
         g->sThumbRY = s.Gamepad.sThumbRY;
     }
-    if (port == 0 && keyboard_active() && g_d3d.hwnd && GetForegroundWindow() == g_d3d.hwnd) {   // player 1
+    bool port_devtools_keyboard_captured();            // devtools_host.cpp: typing in the in-game console
+    if (port == 0 && keyboard_active() && g_d3d.hwnd && GetForegroundWindow() == g_d3d.hwnd &&
+        !port_devtools_keyboard_captured()) {           // player 1
         if (key(VK_UP)) g->wButtons |= XB_DPAD_UP;
         if (key(VK_DOWN)) g->wButtons |= XB_DPAD_DOWN;
         if (key(VK_LEFT)) g->wButtons |= XB_DPAD_LEFT;

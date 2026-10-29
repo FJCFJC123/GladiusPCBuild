@@ -5,6 +5,11 @@
 #include <string.h>
 
 bool g_prof_on;
+bool g_prof_report;
+ProfLast g_prof_last;
+static volatile LONG g_prof_want = -1;                  // devtools live profiler request: -1 none, 0 off, 1 on
+static LARGE_INTEGER g_cal_q;                           // TSC calibration start (prof_init) for a later live start
+static unsigned long long g_cal_t;
 unsigned long long g_prof_ticks[PZ_COUNT];
 unsigned long long g_prof_count[PC_COUNT];
 
@@ -17,6 +22,8 @@ static const char *const COUNTER_NAMES[PC_COUNT] = {"draw_idx", "draw_up", "draw
                                                     "tex_checks", "tex_uploads", "tex_bytes", "state_changes",
                                                     "compiles", "vb_len_uploads"};
 static double g_tsc_ms;                 // milliseconds per TSC tick
+const char *prof_zone_name(int z) { return z >= 0 && z < PZ_COUNT ? ZONE_NAMES[z] : "?"; }
+const char *prof_counter_name(int c) { return c >= 0 && c < PC_COUNT ? COUNTER_NAMES[c] : "?"; }
 static FILE *g_csv;
 static int g_lock_depth;
 static unsigned long long g_lock_t0;
@@ -38,6 +45,7 @@ static int g_gpu_cur = -1, g_gpu_label = -1;
 static double g_gpu_ms, g_gpu_opaque_ms, g_gpu_blend_ms, g_gpu_pass_ms[GP_COUNT];
 static const char *const PASS_NAMES[GP_COUNT] = {"opaque", "blend", "fx", "shadow", "ssao", "taa", "bloom", "fxaa",
                                                  "final", "overlay"};
+const char *prof_pass_name(int p) { return p >= 0 && p < GP_COUNT ? PASS_NAMES[p] : "?"; }
 static DWORD g_gpu_done_frame;
 static int g_gpu_segs;
 
@@ -140,6 +148,14 @@ static void gpu_frame_close()
     f.pending = f.n > 0;
 }
 
+// The closing timestamp goes in before Present: issued after it, it waits in the next frame's command batch and the
+// last pass would absorb the whole gap until that batch reaches the GPU.
+void prof_frame_close_gpu()
+{
+    if (g_prof_on)
+        gpu_frame_close();
+}
+
 // ------------------------------------------------------------------------------------------------ CPU
 void prof_lock_enter()
 {
@@ -160,10 +176,12 @@ void prof_init()
     if (done)
         return;
     done = true;
+    QueryPerformanceCounter(&g_cal_q);
+    g_cal_t = __rdtsc();
     char ini[MAX_PATH];
     GetModuleFileNameA(nullptr, ini, MAX_PATH);
     strcpy(strrchr(ini, 0x5C) + 1, port_ini_name());
-    g_prof_on = GetPrivateProfileIntA("debug", "Profile", 0, ini) != 0 || strstr(GetCommandLineA(), "-gnprof");
+    g_prof_report = g_prof_on = GetPrivateProfileIntA("debug", "Profile", 0, ini) != 0 || strstr(GetCommandLineA(), "-gnprof");
     if (!g_prof_on)
         return;
     LARGE_INTEGER f, q0, q1;                            // TSC rate against QPC over 50 ms
@@ -202,10 +220,39 @@ struct Sum {
 static Sum g_sum;
 static DWORD g_sum_tick;
 
+void prof_set_live(bool on) { InterlockedExchange(&g_prof_want, on ? 1 : 0); }
+
+// a live start/stop request, at the frame boundary (no GPU frame open, counters fresh)
+static void apply_live_request()
+{
+    LONG want = InterlockedExchange(&g_prof_want, -1);
+    if (want < 0 || g_prof_report || (want != 0) == g_prof_on)    // [debug] Profile keeps it on
+        return;
+    if (want) {
+        if (!g_tsc_ms) {                                // TSC rate against QPC since prof_init
+            LARGE_INTEGER f, q;
+            QueryPerformanceFrequency(&f);
+            QueryPerformanceCounter(&q);
+            g_tsc_ms = ((q.QuadPart - g_cal_q.QuadPart) * 1000.0 / f.QuadPart) / (double)(__rdtsc() - g_cal_t);
+        }
+        port_log("prof: live profiler on (devtools graphs)\n");
+    } else {
+        gpu_frame_close();
+        port_log("prof: live profiler off\n");
+    }
+    memset(g_prof_ticks, 0, sizeof g_prof_ticks);
+    memset(g_prof_count, 0, sizeof g_prof_count);
+    g_lock_t0 = 0;
+    g_prof_last.prof = false;
+    g_prof_on = want != 0;
+}
+
 void prof_frame_end(double wall_ms)
 {
-    if (!g_prof_on)
+    if (!g_prof_on) {
+        apply_live_request();
         return;
+    }
     gpu_frame_close();
     gpu_collect();
     if (g_lock_depth && g_lock_t0) {                    // Swap holds the lock around Present: count it up to here
@@ -243,8 +290,16 @@ void prof_frame_end(double wall_ms)
     for (int i = 0; i < PZ_COUNT; i++) s.z[i] += z[i];
     for (int p = 0; p < GP_COUNT; p++) s.pass[p] += g_gpu_pass_ms[p];
     for (int c = 0; c < PC_COUNT; c++) s.c[c] += g_prof_count[c];
+    ProfLast &L = g_prof_last;
+    L.game_ms = (float)game;
+    for (int i = 0; i < PZ_COUNT; i++) L.zone_ms[i] = (float)z[i];
+    L.gpu_ms = (float)g_gpu_ms;
+    for (int p = 0; p < GP_COUNT; p++) L.gpu_pass_ms[p] = (float)g_gpu_pass_ms[p];
+    L.gpu_frame = g_gpu_done_frame;
+    for (int c = 0; c < PC_COUNT; c++) L.counters[c] = (unsigned)g_prof_count[c];
+    L.prof = true;
     DWORD now = GetTickCount();
-    if (now - g_sum_tick >= 1000 && s.frames) {
+    if (g_prof_report && now - g_sum_tick >= 1000 && s.frames) {
         double n = s.frames;
         port_log("prof: %u fr (%u slow) wall %.1f/%.1f | game %.1f shim %.1f present %.1f | gpu %.1f/%.1f (blend %.1f) "
                  "| drain %.2f idx %.2f vbhash %.2f vbup %.2f trans %.2f const %.2f tex %.2f state %.2f lookup %.2f "
@@ -266,4 +321,5 @@ void prof_frame_end(double wall_ms)
     }
     memset(g_prof_ticks, 0, sizeof g_prof_ticks);
     memset(g_prof_count, 0, sizeof g_prof_count);
+    apply_live_request();
 }

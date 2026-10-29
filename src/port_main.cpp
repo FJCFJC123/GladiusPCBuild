@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <initializer_list>
+#include <dbghelp.h>
+bool port_devtools_crash(EXCEPTION_POINTERS *ep, const char *path, const char *why);   // devtools_host.cpp
 #include <intrin.h>
 
 static FILE *g_log;
@@ -85,6 +87,9 @@ void port_log(const char *fmt, ...)
     ReleaseSRWLockExclusive(&lock);
     if (port_log_hook)
         port_log_hook(0, buf);
+    extern void (*port_log_tap)(const char *line);     // devtools_host.cpp: developer tools log panel
+    if (port_log_tap)
+        port_log_tap(buf);
 }
 
 // Reached through a krnl_* trap: [esp] = slot index, [esp+4] = return address into the caller.
@@ -391,8 +396,7 @@ static ULONGLONG thread_cpu(HANDLE h)
 
 void port_thread_stats()
 {
-    extern bool g_prof_on;
-    if (!g_prof_on)
+    if (!g_prof_report)
         return;
     static ULONGLONG last_tick, last_main, last[32];
     ULONGLONG now = GetTickCount64();
@@ -512,6 +516,36 @@ struct DumpJob {
     DWORD tid;
 };
 
+// [debug] CrashDump: 0 off, 1 normal (default: stacks, module data, referenced memory and the game heap arenas - a
+// few hundred MB), 2 full memory (1.5-2 GB: also textures, the 512 MB physical arena and D3D memory).
+static int g_dump_mode = 1;
+
+// normal dumps: add the game's own heap (container main + local arenas, up to their high-water marks)
+static BOOL CALLBACK dump_callback(void *, const PMINIDUMP_CALLBACK_INPUT in, PMINIDUMP_CALLBACK_OUTPUT out)
+{
+    static const int arenas[] = {CTR_MAIN, CTR_LOCAL};
+    static int arena_i;
+    static uintptr_t at, end;
+    if (in->CallbackType != MemoryCallback) return TRUE;
+    for (;;) {
+        if (at >= end) {
+            if (arena_i >= 2) return FALSE;             // no more ranges
+            uintptr_t b, e;
+            if (container_range(arenas[arena_i++], &b, &e)) at = b, end = e;
+            continue;
+        }
+        MEMORY_BASIC_INFORMATION mi;
+        if (!VirtualQuery((void *)at, &mi, sizeof mi)) return FALSE;
+        uintptr_t from = at, rend = (uintptr_t)mi.BaseAddress + mi.RegionSize;
+        at = rend < end ? rend : end;
+        if (mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            out->MemoryBase = from;
+            out->MemorySize = (ULONG)(at - from);
+            return TRUE;
+        }
+    }
+}
+
 static DWORD WINAPI dump_writer(LPVOID p)
 {
     DumpJob *job = (DumpJob *)p;
@@ -528,9 +562,14 @@ static DWORD WINAPI dump_writer(LPVOID p)
         EXCEPTION_POINTERS *ExceptionPointers;
         BOOL ClientPointers;
     } mei = {job->tid, job->ep, FALSE};
-    // FullMemory 0x2 | HandleData 0x4 | UnloadedModules 0x20 | FullMemoryInfo 0x800 | ThreadInfo 0x1000
-    BOOL ok = write(GetCurrentProcess(), GetCurrentProcessId(), f, 0x2 | 0x4 | 0x20 | 0x800 | 0x1000,
-                    job->ep ? &mei : nullptr, nullptr, nullptr);
+    // full: FullMemory 0x2 | HandleData 0x4 | UnloadedModules 0x20 | FullMemoryInfo 0x800 | ThreadInfo 0x1000
+    // normal: DataSegs 0x1 | HandleData | UnloadedModules | IndirectlyReferencedMemory 0x40 | ProcessThreadData 0x100
+    //         | FullMemoryInfo | ThreadInfo, plus dump_callback's ranges
+    bool full = g_dump_mode >= 2;
+    MINIDUMP_CALLBACK_INFORMATION cb = {dump_callback, nullptr};
+    BOOL ok = write(GetCurrentProcess(), GetCurrentProcessId(), f,
+                    full ? 0x2 | 0x4 | 0x20 | 0x800 | 0x1000 : 0x1 | 0x4 | 0x20 | 0x40 | 0x100 | 0x800 | 0x1000,
+                    job->ep ? &mei : nullptr, nullptr, full ? nullptr : &cb);
     CloseHandle(f);
     return ok ? 0 : 3;
 }
@@ -578,9 +617,19 @@ static void write_dump(const char *why, EXCEPTION_POINTERS *ep)
     GetLocalTime(&st);
     _snprintf(job.path, MAX_PATH, "%s\\%04u-%02u-%02u_%02u-%02u-%02u_%s.dmp", dir, st.wYear, st.wMonth, st.wDay,
               st.wHour, st.wMinute, st.wSecond, why);
+    char report[MAX_PATH];                              // readable report first (devtools): it needs no other thread
+    _snprintf(report, MAX_PATH, "%s\\%04u-%02u-%02u_%02u-%02u-%02u_%s.txt", dir, st.wYear, st.wMonth, st.wDay,
+              st.wHour, st.wMinute, st.wSecond, why);
+    if (port_devtools_crash(ep, report, why))
+        port_log("dump: crash report %s\n", report);
+    if (!g_dump_mode) {
+        port_log("dump: skipped ([debug] CrashDump=0)\n");
+        ReleaseSRWLockExclusive(&lock);
+        return;
+    }
     job.ep = ep;
     job.tid = GetCurrentThreadId();
-    port_log("dump: writing full-memory dump %s ...\n", job.path);
+    port_log("dump: writing %s dump %s ...\n", g_dump_mode >= 2 ? "full-memory" : "normal", job.path);
     DWORD t0 = GetTickCount(), code = 99;
     HANDLE t = CreateThread(nullptr, 0, dump_writer, &job, 0, nullptr);
     if (t) {
@@ -804,6 +853,7 @@ void port_battle_trace_init();                  // battle_trace.cpp
 void port_battle_restart_init();                // battle_restart.cpp
 void port_save_pages_init(const char *ini);     // save_pages.cpp
 void port_oldhud_init(const char *ini);         // oldhud_host.cpp
+void port_devtools_init(const char *ini);       // devtools_host.cpp
 void port_reboot_init();                        // reboot.cpp
 void port_options_video_init();                 // options_video.cpp
 void port_menu_quit_init();                     // menu_quit.cpp
@@ -1179,6 +1229,8 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     port_battle_trace_init();                           // skill stage tracer (battle_trace.cpp)
     port_battle_restart_init();                         // debug menu battle restart (loading screen fix)
     port_oldhud_init(ini);                              // [codes] OldHud: PS2 demo battle HUD (oldhud.dll)
+    port_devtools_init(ini);                            // [devtools] Enabled: console / tools window (devtools.dll)
+    g_dump_mode = GetPrivateProfileIntA("debug", "CrashDump", 1, ini);   // crash dump size (write_dump)
     port_save_pages_init(ini);                          // save screen: pages of 3, up to 27 saves
     port_reboot_init();                                 // soft reboot -> seamless relaunch
     port_options_video_init();                          // Options screen: Video page

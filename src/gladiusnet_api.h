@@ -4,7 +4,7 @@
 #pragma once
 #include "gn.h"
 
-#define GLADIUSNET_ABI 3                 // bump on any change to GnNetApi or to gp_api.h
+#define GLADIUSNET_ABI 4                 // bump on any change to GnNetApi or to gp_api.h
 
 struct GnNetApi {
     uint32_t abi;                        // GLADIUSNET_ABI
@@ -19,9 +19,11 @@ struct GnNetApi {
     // After the harness and the save screen: AI-vs-AI timer, session trace, lobby pad blanking.
     void (*after)(GnCtx *c, int stateId, int sub);
     bool (*running)();                   // lockstep session active
+    bool (*in_match)();                  // hosting a lobby, joining / joined one, or in a session (not just browsing)
 };
 
 typedef const GnNetApi *(__cdecl *GladiusNetEntry)(uint32_t abi);   // export "gladiusnet_api"
 
 const GnNetApi *gn_net();                // gn_hooks.cpp: the loaded table, NULL = offline
 inline bool gn_net_running() { const GnNetApi *n = gn_net(); return n && n->running(); }
+inline bool gn_net_in_match() { const GnNetApi *n = gn_net(); return n && n->in_match(); }

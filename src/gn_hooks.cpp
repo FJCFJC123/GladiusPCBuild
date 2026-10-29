@@ -429,6 +429,8 @@ static void __cdecl pad_poll_hook()
     void port_mods_frame();                             // mods.cpp: live items.tok / skills.tok reloads
     port_mods_frame();
     ((void(__cdecl *)())0x183360)();
+    void port_devtools_frame();                         // devtools_host.cpp: console commands, in-game console
+    port_devtools_frame();
     void port_godcam_frame();                           // godcam.cpp: fly the God Camera with this frame's pads
     port_godcam_frame();
     void port_editor_frame();                           // editor.cpp: file loads for the editor window

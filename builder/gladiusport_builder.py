@@ -52,6 +52,52 @@ def payload_file(name):
     raise FileNotFoundError(f"{name} is missing from the builder payload")
 
 
+# Developer tools (devtools.dll: console, variables, logs, graphs, script debugger, quest flow; crash reports in debug
+# builds only) - for modders and developers, an option (off by default) of every builder (build_exe.bat bundles the
+# devtools.dll of the same build). The script debugger's source view runs the Dog decompiler (devtools\dog) with
+# Python 3; the install records which Python in [devtools] Python=.
+def devtools_dog_dir():
+    """The bundled decompiler package, or None."""
+    here = Path(__file__).resolve().parent
+    for cand in (bundle_dir() / "devtools" / "dog", here.parent / "src" / "devtools" / "dog"):
+        if (cand / "decompile.py").exists():
+            return cand
+    return None
+
+
+def devtools_available():
+    try:
+        payload_file("devtools.dll")
+    except FileNotFoundError:
+        return False
+    return devtools_dog_dir() is not None
+
+
+def find_python():
+    """A Python 3.8 or newer for the decompiler: (python.exe path, "3.x") or (None, reason)."""
+    import subprocess
+    probe = "import sys; print(sys.executable); print('%d.%d' % sys.version_info[:2])"
+    flags = 0x08000000 if os.name == "nt" else 0         # CREATE_NO_WINDOW
+    tried = []
+    for cmd in (["py", "-3"], ["python"], ["python3"]):
+        tried.append(" ".join(cmd))
+        try:
+            r = subprocess.run(cmd + ["-c", probe], capture_output=True, text=True, timeout=20, creationflags=flags)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        out = r.stdout.strip().splitlines()
+        if r.returncode or len(out) < 2:                 # e.g. the Microsoft Store "python" placeholder
+            continue
+        exe, ver = out[0].strip(), out[-1].strip()
+        try:
+            major, minor = (int(x) for x in ver.split("."))
+        except ValueError:
+            continue
+        if (major, minor) >= (3, 8) and Path(exe).exists():
+            return exe, ver
+    return None, "no Python 3.8+ found (tried " + ", ".join(tried) + ")"
+
+
 def load_tools():
     """Import xbe2pe / xiso from the shipped tools folder."""
     tools = str(bundle_dir() / "tools")
@@ -173,6 +219,7 @@ class Builder:
             (self.out / "gladiusnet.dll").unlink(missing_ok=True)
             (self.out / "gladiusnet_LICENSE.txt").unlink(missing_ok=True)
             self.log("gladiusnet.dll not in this builder - online versus unavailable")
+        self.install_devtools()
         # GladiusPort + third-party license texts travel with every install (THIRD_PARTY_NOTICES.md)
         lic = bundle_dir() / "LICENSES"
         if lic.is_dir():
@@ -180,6 +227,33 @@ class Builder:
             shutil.copyfile(bundle_dir() / "THIRD_PARTY_NOTICES.md", self.out / "THIRD_PARTY_NOTICES.md")
             shutil.copyfile(bundle_dir() / "LICENSE", self.out / "LICENSE.txt")
             self.log("Installed licenses (LICENSE.txt, LICENSES, THIRD_PARTY_NOTICES.md)")
+
+    def install_devtools(self):
+        """Developer tools option: devtools.dll + the Dog decompiler, and the Python to run it.
+        Not selected: an earlier install's copy is removed (its devtools\\scripts source cache is kept)."""
+        self.python = None
+        dll, dog = self.out / "devtools.dll", self.out / "devtools" / "dog"
+        if not (self.opt.get("devtools") and devtools_available()):
+            if dll.exists() or dog.exists():
+                dll.unlink(missing_ok=True)
+                shutil.rmtree(dog, ignore_errors=True)
+                shutil.rmtree(self.out / "devtools" / "dogc", ignore_errors=True)
+                self.log("Removed the developer tools (not selected)")
+            return
+        shutil.copyfile(payload_file("devtools.dll"), dll)
+        shutil.rmtree(dog, ignore_errors=True)
+        shutil.copytree(devtools_dog_dir(), dog, ignore=shutil.ignore_patterns("__pycache__"))
+        dogc = devtools_dog_dir().parent / "dogc"          # the sandbox's script compiler
+        if (dogc / "DOGCodeCompiler.exe").exists():
+            shutil.copytree(dogc, self.out / "devtools" / "dogc", dirs_exist_ok=True)
+        self.log("Installed devtools.dll + devtools\\dog (developer tools: ` console, Ctrl+` tools window)")
+        exe, info = find_python()
+        if exe:
+            self.python = exe
+            self.log(f"Python {info}: {exe} - script debugger source view on")
+        else:
+            self.log(f"Script debugger: {info}. Install Python 3 (python.org) and run this option again for the source "
+                     "view; until then it shows the disassembly")
 
     # ------------------------------------------------------------------ settings
     def write_settings(self):
@@ -193,6 +267,12 @@ class Builder:
         set_ini(ini, "game", "UnlockVersus", "1" if self.opt.get("unlock_versus", True) else "0")
         set_ini(ini, "game", "DevMenus", "1" if self.opt.get("dev_menus") else "0")
         set_ini(ini, "game", "UnlockArenas", "1")          # all 15 versus arenas (must match across netplay PCs)
+        if (self.out / "devtools.dll").exists():            # developer tools installed
+            set_ini(ini, "devtools", "Enabled", "1")
+            if getattr(self, "python", None):
+                set_ini(ini, "devtools", "Python", self.python)
+        else:
+            set_ini(ini, "devtools", "Enabled", "0")
         vol = self.opt.get("volume")                        # None (CLI without --volume): leave [audio] as it is
         if vol is not None:
             set_ini(ini, "audio", "Volume", str(max(0, min(100, int(vol)))))
@@ -534,6 +614,8 @@ def cli(argv):
     ap.add_argument("--no-unlock-versus", action="store_true", help="Versus only after story progress (retail)")
     ap.add_argument("--console", action="store_true", help="Keep a console window next to the game")
     ap.add_argument("--editor", action="store_true", help="Also install gladius_editor.exe (level editor)")
+    ap.add_argument("--devtools", action="store_true", help="Developer tools (modders / devs, off by default): console, graphs, "
+                    "crash reports, script debugger (+ Python check for its source view)")
     ap.add_argument("--texture-pack", help="HD texture pack folder (<texture name>.png files)")
     ap.add_argument("--name", help="Player name for online versus")
     ap.add_argument("--relay", help=f"Online relay host:port (default {DEFAULT_RELAY})")
@@ -548,6 +630,8 @@ def cli(argv):
     ap.add_argument("--xdelta-dir", help="Xdelta folder: one subfolder of .xdelta patches per mod")
     ap.add_argument("--mod", help="Mod (subfolder of --xdelta-dir) to apply, 'none' = remove the applied mod")
     a = ap.parse_args(argv)
+    if a.devtools and not devtools_available():
+        sys.exit("--devtools: this builder has no developer tools bundled (rebuild it with build_exe.bat).")
     if a.detect:
         print("Hardware: " + describe_hardware(detect_hardware()))
         return
@@ -566,7 +650,7 @@ def cli(argv):
             print(f"  [{label}] {pct * 10}%", flush=True)
 
     opts = {"dev_menus": not a.no_dev_menus, "unlock_versus": not a.no_unlock_versus, "console": a.console,
-            "editor": a.editor, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset,
+            "editor": a.editor, "devtools": a.devtools, "player_name": a.name, "relay": a.relay, "force_extract": a.force_extract, "preset": a.preset,
             "texture_pack": a.texture_pack, "volume": a.volume}
     if a.codes is not None:
         codes = [] if a.codes.strip().lower() == "none" else [c.strip() for c in a.codes.split(",") if c.strip()]
@@ -606,6 +690,8 @@ def gui():
     v_vs = tk.BooleanVar(value=settings.get("unlock_versus", True))
     v_con = tk.BooleanVar(value=settings.get("console", False))
     v_edit = tk.BooleanVar(value=settings.get("editor", False))
+    has_devtools = devtools_available()
+    v_devtools = tk.BooleanVar(value=has_devtools and settings.get("devtools", False))
     v_name = tk.StringVar(value=settings.get("player_name", socket.gethostname()[:15]))
     v_relay = tk.StringVar(value=settings.get("relay", DEFAULT_RELAY))
     v_pack = tk.StringVar(value=settings.get("texture_pack", ""))
@@ -668,6 +754,10 @@ def gui():
                                                                                          sticky="w")
     ttk.Checkbutton(box, text="Level editor (gladius_editor.exe: props, meshes, levels, battle grid)",
                     variable=v_edit).grid(row=3, column=0, columnspan=2, sticky="w")
+    if has_devtools:                                     # builders made by build_exe.bat bundle them
+        ttk.Checkbutton(box, text="Developer tools (console, graphs, crash reports, script debugger; "
+                        "script source needs Python 3)", variable=v_devtools).grid(row=2, column=0, columnspan=2,
+                                                                                  sticky="w")
     ttk.Label(box, text="Online name").grid(row=4, column=0, sticky="w", pady=(6, 0))
     ttk.Entry(box, textvariable=v_name, width=20).grid(row=4, column=1, sticky="w", padx=6, pady=(6, 0))
     ttk.Label(box, text="Online server").grid(row=5, column=0, sticky="w")
@@ -813,7 +903,7 @@ def gui():
 
     def opts():
         return {"dev_menus": v_dev.get(), "unlock_versus": v_vs.get(), "console": v_con.get(),
-                "editor": v_edit.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
+                "editor": v_edit.get(), "devtools": v_devtools.get(), "player_name": v_name.get().strip(), "relay": v_relay.get().strip(),
                 "preset": preset_choices.get(v_preset.get()), "texture_pack": v_pack.get().strip(),
                 "codes": [k for k, _, _ in CODES if v_codes[k].get()],
                 "mod": v_mod.get(), "xdelta_dir": v_xd.get().strip(), "volume": v_vol.get()}
