@@ -13,6 +13,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
 
 -  **[How it works](docs/TECHNICAL.md)**: kernel replacement, the Direct3D 8 → 11 layer and the visual enhancements
 -  **[Gladius Editor](docs/EDITOR.md)**: the built-in level editor
+-  **[Developer tools](docs/DEVTOOLS.md)**: console, live variables, graphs, the Dog script debugger and the quest
+   flow editor, for modders and developers
 
 ---
 
@@ -41,6 +43,8 @@ much like Wine does for Windows programs. The hardware itself (CPU, GPU, audio c
   closed-source `gladiusnet.dll`, under its own [license](#license).
 - **Level editor** (optional): reshape levels, merge in GLB models, and edit collision, the battle grid and props, live
   inside the running game. See [below](#level-editor).
+- **Developer tools** (optional, for modders): an in-game console, live variables and logs, performance graphs, a
+  debugger for the game's Dog scripts and a quest flow editor. See [below](#developer-tools).
 
 ---
 
@@ -76,6 +80,33 @@ immediately.
   the original at any time.
 
 The full guide is in **[docs/EDITOR.md](docs/EDITOR.md)**.
+
+---
+
+## Developer tools
+
+Tick **Developer tools** in the builder to install `devtools.dll`: the game's own developer console brought back
+to life, plus a separate tools window for modders and developers.
+
+- **In-game console** (`` ` ``): the game's hundreds of commands and tunable variables, with their output shown
+  again, tab completion and history. Commands retail left out or broke are restored.
+- **Tools window** (`` Ctrl+` ``):
+  - live variables, commands and logs (including the game's own script output);
+  - frame time, renderer profiler and memory graphs.
+- **Dog script debugger:** the game logic (quests, conversations, battle events) runs in LucasArts' Dog scripting
+  language. See every running script with:
+  - decompiled source (with Python 3) or disassembly;
+  - breakpoints and stepping;
+  - call stack, locals and globals, editable;
+  - script error capture;
+  - script resets, and event handlers with duplicate removal.
+- **Quest flow:** every game variable that holds quest progress, live and editable, with a map of where each one is
+  set and checked across all scripts. Jump a quest to any step, undo changes, and snapshot / restore progress to
+  replay a step.
+- **Crash reports** with readable call stacks and game state (debug builds).
+
+The developer tools shut down completely as soon as you host or join an online lobby, and release builds never
+write memory dumps or crash reports. The full guide is in **[docs/DEVTOOLS.md](docs/DEVTOOLS.md)**.
 
 ---
 

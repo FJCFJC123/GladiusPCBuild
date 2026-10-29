@@ -27,10 +27,11 @@ copy /y ..\build\SDL2.dll payload\ >nul || exit /b 1
 xcopy /y /q /i ..\LICENSES payload\LICENSES >nul || exit /b 1
 copy /y ..\THIRD_PARTY_NOTICES.md payload\ >nul || exit /b 1
 copy /y ..\LICENSE payload\ >nul || exit /b 1
-for %%d in (%DLL%) do copy /y "%%~dpddevtools.dll" payload\ >nul || exit /b 1
+for %%d in (%DLL%) do set DLLDIR=%%~dpd
+copy /y "%DLLDIR%devtools.dll" payload\ >nul || exit /b 1
 mkdir payload\devtools\dog
 copy /y ..\src\devtools\dog\*.py payload\devtools\dog\ >nul || exit /b 1
-python -m PyInstaller --noconfirm --onefile --windowed --name GladiusPortBuilder ^
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name GladiusPortBuilder ^
   --add-data "payload;." ^
   --hidden-import re --hidden-import struct --hidden-import hashlib ^
   gladiusport_builder.py || exit /b 1
