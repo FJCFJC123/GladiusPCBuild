@@ -14,6 +14,7 @@ if exist payload rmdir /s /q payload
 mkdir payload\tools
 for %%f in (xbe.py xbe2pe.py xbeicon.py xiso.py replacements.py d3d_table.py kernel_names.py vcdiff.py) do copy /y ..\tools\%%f payload\tools\ >nul || exit /b 1
 copy /y %DLL% payload\ >nul || exit /b 1
+for %%d in (%DLL%) do copy /y "%%~dpdoldhud.dll" payload\ >nul || exit /b 1
 set NETDLL=..\netplay\gladiusnet.dll
 if /i "%~1"=="dev" if exist ..\build\gladiusnet.dll set NETDLL=..\build\gladiusnet.dll
 if not exist %NETDLL% (echo missing %NETDLL% - online versus would be unavailable & exit /b 1)

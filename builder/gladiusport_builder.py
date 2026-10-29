@@ -160,7 +160,7 @@ class Builder:
         layout = self.out / "gladius.layout.txt"
         if layout.exists():
             layout.unlink()
-        for name in ("gladiusport.dll", "SDL2.dll"):
+        for name in ("gladiusport.dll", "SDL2.dll", "oldhud.dll"):
             shutil.copyfile(payload_file(name), self.out / name)
             self.log(f"Installed {name}")
         # online versus: the prebuilt gladiusnet.dll; without it the game runs offline
@@ -347,6 +347,7 @@ CODES = [
     ("PoisonPercent", "Poison deals 10% of max health", None),
     ("BleedPercent", "Bleeding deals 10% of max health", None),
     ("Unlock20Slots", "All 20 school slots unlocked from the start", "Roster40"),
+    ("OldHud", "Old-style battle HUD (from the Feb 2003 PS2 demo; visual only, any online opponent)", None),
 ]
 CODES_ORDER = {k: i for i, (k, _, _) in enumerate(CODES)}
 

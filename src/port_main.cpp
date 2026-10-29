@@ -803,6 +803,7 @@ void d3d_install_fx_hooks();                    // d3d_render.cpp
 void port_battle_trace_init();                  // battle_trace.cpp
 void port_battle_restart_init();                // battle_restart.cpp
 void port_save_pages_init(const char *ini);     // save_pages.cpp
+void port_oldhud_init(const char *ini);         // oldhud_host.cpp
 void port_reboot_init();                        // reboot.cpp
 void port_options_video_init();                 // options_video.cpp
 void port_menu_quit_init();                     // menu_quit.cpp
@@ -1177,6 +1178,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     d3d_install_fx_hooks();                             // particle renderer bracket (d3d_render.cpp)
     port_battle_trace_init();                           // skill stage tracer (battle_trace.cpp)
     port_battle_restart_init();                         // debug menu battle restart (loading screen fix)
+    port_oldhud_init(ini);                              // [codes] OldHud: PS2 demo battle HUD (oldhud.dll)
     port_save_pages_init(ini);                          // save screen: pages of 3, up to 27 saves
     port_reboot_init();                                 // soft reboot -> seamless relaunch
     port_options_video_init();                          // Options screen: Video page
