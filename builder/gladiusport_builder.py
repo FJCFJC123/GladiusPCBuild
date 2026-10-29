@@ -776,9 +776,10 @@ def gui():
     fvol = ttk.Frame(box)
     fvol.grid(row=10, column=1, sticky="w", padx=6, pady=(6, 0))
     vol_lbl = ttk.Label(fvol, width=5)
-    ttk.Scale(fvol, from_=0, to=100, length=220, command=lambda v: (v_vol.set(int(float(v))),
-              vol_lbl.configure(text=f"{v_vol.get()}%"))).pack(side="left")
-    fvol.winfo_children()[0].set(v_vol.get())
+    vol_scale = ttk.Scale(fvol, from_=0, to=100, length=220, command=lambda v: (v_vol.set(int(float(v))),
+                          vol_lbl.configure(text=f"{v_vol.get()}%")))
+    vol_scale.pack(side="left")
+    vol_scale.set(v_vol.get())
     vol_lbl.configure(text=f"{v_vol.get()}%")
     vol_lbl.pack(side="left", padx=(6, 0))
     ttk.Label(box, text="Game audio is mastered loud; 40% is about the level of other programs. Windows volume applies "
