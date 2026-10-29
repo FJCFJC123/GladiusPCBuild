@@ -1,7 +1,10 @@
-"""Batch decompiler: python -m dog <input file|dir> [-o out_dir] [--map]
+"""Dog scripts: decompile bytecode, or compile source.
 
-.scb -> .scp, .boo -> .moo. Demo files that still carry their debug source (INFO block)
-are decompiled from the bytecode too; the embedded source truncates long lines.
+  python -m dog <input file|dir> [-o out_dir] [--map]      .scb -> .scp, .boo -> .moo (decompile)
+  python -m dog compile <file.scp|.moo> [-o out_file]      .scp -> .scb, .moo -> .boo (compile, release format)
+
+Demo files that still carry their debug source (INFO block) are decompiled from the bytecode too; the embedded
+source truncates long lines. Compile errors print as '<file>(<line>) Error: "<message>"' (exit code 1).
 """
 import argparse
 import sys
@@ -11,7 +14,30 @@ from . import scb
 from .decompile import decompile_file
 
 
+def compile_main(argv):
+    from .compile import CompileError, compile_source
+    ap = argparse.ArgumentParser(prog="python -m dog compile")
+    ap.add_argument("input")
+    ap.add_argument("-o", "--out", help="output file (default: next to the source, .scb / .boo)")
+    a = ap.parse_args(argv)
+    src = Path(a.input)
+    dst = Path(a.out) if a.out else src.with_suffix(".boo" if src.suffix.lower() == ".moo" else ".scb")
+    try:
+        data = compile_source(src.read_text(encoding="cp1252", errors="replace"), src.stem)
+    except CompileError as e:
+        print(f'{src.name}({e.line}) Error: "{e.msg}"')
+        return 1
+    except RecursionError:
+        print(f'{src.name}(0) Error: "expression nested too deeply"')
+        return 1
+    dst.write_bytes(data)
+    print(f"{src.name} -> {dst.name} ({len(data)} bytes)")
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "compile":
+        return compile_main(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--out", help="output folder (default: next to the inputs)")

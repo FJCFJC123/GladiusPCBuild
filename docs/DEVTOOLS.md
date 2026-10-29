@@ -38,10 +38,11 @@ online match.
 | File | What it is |
 |---|---|
 | `devtools.dll` | the tools themselves |
-| `devtools\dog\` | the Dog script decompiler (Python), for the script debugger's source view |
+| `devtools\dog\` | GladiusPort's Dog script decompiler and compiler (Python), for the source view and the sandbox |
 
 The builder also looks for Python 3.8 or newer. If it finds one, it writes `[devtools] Python=` so the script
-debugger can show readable source. Without Python everything still works, but scripts show as disassembly.
+debugger can show readable source and the sandbox can compile. Without Python everything else still works, but
+scripts show as disassembly and the sandbox can't compile.
 
 **By hand:** put `devtools.dll` next to `gladius.exe` and set:
 
@@ -217,8 +218,10 @@ running game:
 line numbers. Tick **reset** to start the script fresh instead of carrying values over. The swap lasts until the
 game restarts; game files are never touched.
 
-> The sandbox needs a Dog compiler. GladiusPort's own compiler is in development. Until it ships, the sandbox
-> reports that no compiler is installed. Everything else in the debugger works without one.
+> The sandbox compiles with GladiusPort's own Dog compiler (`devtools\dog`, run with the same Python as the
+> decompiler). It reproduces the game's compiler: the retail scripts decompiled and compiled again give the same
+> code (1,794 of 1,945 byte for byte; the rest differ only in the text of print statements the release compiler
+> already removed). It also runs standalone: `python -m dog compile <file.scp> [-o out.scb]`.
 
 **Reset scripts:** tick one or more files and press **Reset selected**. Each ticked file then:
 
@@ -376,5 +379,5 @@ from scratch. Check **Event handlers** for duplicates afterwards and **Remove du
 | The tools went away mid-session | an online lobby was hosted or joined (`port.log`: `devtools: off - online lobby`). Restart the game |
 | Scripts show only disassembly | no Python: install Python 3.8+ and run the builder's Developer tools option again (or set `[devtools] Python=`) |
 | Decompile failed | read `devtools\scripts\decompile.log`; delete the cached `.scp` / `.map` in `devtools\scripts\` to retry |
-| Sandbox says no compiler | GladiusPort's Dog compiler is still in development |
+| Sandbox can't compile | it needs Python 3.8+ (`[devtools] Python=`); compile errors list the line and message |
 | `crashreport` refused | release build: no reports by design |

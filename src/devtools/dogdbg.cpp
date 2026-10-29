@@ -1987,7 +1987,8 @@ std::string dogdbg_reset_files(const std::vector<std::string> &names, bool run_k
 
 // ------------------------------------------------------------------------------------------------ UI: sandbox
 // Edit a script's source and swap it into the running game: devtools\sandbox\<name>.scp (started from the decompiled
-// source) is opened in the user's editor; each save is compiled with devtools\dogc\DOGCodeCompiler.exe and, when it
+// source) is opened in the user's editor; each save is compiled with GladiusPort's Dog compiler (devtools\dog,
+// `python -m dog compile`, the same Python as the decompiler) and, when it
 // compiles, replaces the loaded file (process_swap). Revert puts back the image the game had loaded. Nothing in the
 // game's data changes: the sandbox ends with the session.
 struct Sandbox {
@@ -2036,7 +2037,7 @@ static FILETIME file_stamp(const std::string &path)
 }
 
 struct CcJob {
-    std::string exe, src, out, name;
+    std::string python, src, out, name;                 // python: [devtools] Python=, run from <exe>\devtools
 };
 // run the compiler on j.src -> j.out; img = the bytecode when it compiled
 static void run_compiler(const CcJob *j, std::vector<uint8_t> &img, std::vector<CompileErr> &errs, std::string &status)
@@ -2051,17 +2052,19 @@ static void run_compiler(const CcJob *j, std::vector<uint8_t> &img, std::vector<
     PROCESS_INFORMATION pi = {};
     char src[MAX_PATH];                                 // it runs in the output folder: the source path must be absolute
     if (!GetFullPathNameA(j->src.c_str(), MAX_PATH, src, nullptr)) lstrcpynA(src, j->src.c_str(), MAX_PATH);
-    std::string cmd = "\"" + j->exe + "\" \"" + src + "\" \"" + j->out + "\"";
+    std::string root, py;
+    decompiler_configured(&root, &py);
+    std::string cmd = "\"" + j->python + "\" -m dog compile \"" + std::string(src) + "\" -o \"" + j->out + "\"";
     std::vector<char> c(cmd.begin(), cmd.end());
     c.push_back(0);
-    std::string dir = j->out.substr(0, j->out.find_last_of('\\'));
+    std::string dir = root;                             // `-m dog` is found from here
     if (CreateProcessA(nullptr, c.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
         if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         CloseHandle(h);
         h = INVALID_HANDLE_VALUE;
-        // its errors: "<file>(<line>) Error: "<message>"" (after an ESC colour code)
+        // its errors: "<file>(<line>) Error: "<message>""
         if (FILE *f = fopen(log.c_str(), "rb")) {
             char line[1024];
             while (fgets(line, sizeof line, f)) {
@@ -2093,7 +2096,7 @@ static void run_compiler(const CcJob *j, std::vector<uint8_t> &img, std::vector<
         } else
             status = "compiled (" + std::to_string(img.size()) + " bytes)";
     } else
-        status = "could not run " + j->exe;
+        status = "could not run " + j->python + " (the script compiler needs Python 3: [devtools] Python=)";
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 }
 
@@ -2118,10 +2121,10 @@ static DWORD WINAPI compile_thread(void *p)
 
 static void start_compile(Sandbox &sb)
 {
-    std::string exe = devtools_dir() + "dogc\\DOGCodeCompiler.exe";
-    if (GetFileAttributesA(exe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    std::string root, python;
+    if (!decompiler_configured(&root, &python)) {
         std::lock_guard<std::mutex> l(g_cc_lock);
-        g_cc_status = "the script compiler (devtools\\dogc) is not installed - GladiusPort Builder's developer tools option "
+        g_cc_status = "the script compiler (devtools\\dog) is not installed - GladiusPort Builder's developer tools option "
                       "installs it";
         return;
     }
@@ -2129,7 +2132,7 @@ static void start_compile(Sandbox &sb)
     sb.stamp = file_stamp(sb.src);
     std::string dir = devtools_dir() + "sandbox\\out";
     CreateDirectoryA(dir.c_str(), nullptr);
-    CcJob *j = new CcJob{exe, sb.src, dir + "\\" + stem_of(sb.name) + (is_mood(sb.name) ? ".boo" : ".scb"), sb.name};
+    CcJob *j = new CcJob{python, sb.src, dir + "\\" + stem_of(sb.name) + (is_mood(sb.name) ? ".boo" : ".scb"), sb.name};
     {
         std::lock_guard<std::mutex> l(g_cc_lock);
         g_cc_status = "compiling...";
@@ -2197,7 +2200,9 @@ std::string dogdbg_swap_file(const std::string &name, const std::string &path)
         std::string dir = devtools_dir() + "sandbox";
         CreateDirectoryA(dir.c_str(), nullptr);
         CreateDirectoryA((dir + "\\out").c_str(), nullptr);
-        CcJob j{devtools_dir() + "dogc\\DOGCodeCompiler.exe", path,
+        std::string root, python;
+        decompiler_configured(&root, &python);
+        CcJob j{python, path,
                 dir + "\\out\\" + stem_of(base_name(file_name(f))) + (is_mood(file_name(f)) ? ".boo" : ".scb"), name};
         std::vector<CompileErr> errs;
         std::string status;

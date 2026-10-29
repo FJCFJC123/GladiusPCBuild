@@ -243,9 +243,6 @@ class Builder:
         shutil.copyfile(payload_file("devtools.dll"), dll)
         shutil.rmtree(dog, ignore_errors=True)
         shutil.copytree(devtools_dog_dir(), dog, ignore=shutil.ignore_patterns("__pycache__"))
-        dogc = devtools_dog_dir().parent / "dogc"          # the sandbox's script compiler
-        if (dogc / "DOGCodeCompiler.exe").exists():
-            shutil.copytree(dogc, self.out / "devtools" / "dogc", dirs_exist_ok=True)
         self.log("Installed devtools.dll + devtools\\dog (developer tools: ` console, Ctrl+` tools window)")
         exe, info = find_python()
         if exe:

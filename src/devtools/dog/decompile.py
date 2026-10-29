@@ -28,6 +28,7 @@ DECLS = {"INT": "int", "FLOAT": "float", "STRING": "string", "VECTOR": "vector",
 ALLOCS = {"ALLOC_INT_ARRAY": "int", "ALLOC_FLOAT_ARRAY": "float", "ALLOC_ARRAY": "array",
           "ALLOC_ARTICLE": "article"}
 ATOM = 99
+BLOCK_END = ("ENDIF", "ELSE", "ELSEIF", "BRA_ENDIF", "ENDWHILE", "SKIP", "EOF")
 
 
 class DecompileError(Exception):
@@ -129,6 +130,7 @@ class Decompiler:
         self._last_decl = None
         self.referenced = []     # every variable use, in file order
         self.nested_call_quirk = False
+        self.nested_fn = False   # inside a function header met within a block
         self.warnings = []
         self.notes = []
 
@@ -310,9 +312,9 @@ class Decompiler:
             elif n == "DISCARD":
                 if len(stack) == 1 and stack[0].text == "0xDEADC0DE":
                     # the release compiler replaces print/printf/debug statements with a
-                    # no-op 'push 0xDEADC0DE; discard'. Emit only a comment: a bare hex
-                    # statement may not parse, and dropping the no-op changes nothing.
-                    lines.append(self.tag("// print/debug statement (stripped by the release compiler)"))
+                    # no-op 'push 0xDEADC0DE; discard'. 'print()' compiles back to exactly
+                    # that (dog.compile strips it the same way); its text is lost.
+                    lines.append(self.tag("print()    // debug output (its text was stripped by the release compiler)"))
                     stack.clear()
                     self._last_decl = None
                 elif len(stack) > 1:
@@ -328,9 +330,8 @@ class Decompiler:
                         lines[-1] = self.tag(self._last_decl[1] + " = " + e.text.split(" = ", 1)[1], lines[-1].offs)
                     elif e.kind == "expr" and e.group is None and e.var is None and "(" not in e.text:
                         # a lone literal statement is a no-op (e.g. the stray '.0' from the
-                        # source typo 'x = 0.0.0'); keep it only as a comment so it can't
-                        # trip the compiler
-                        lines.append(self.tag(f"// no-op statement: {e.text}"))
+                        # source typo 'x = 0.0.0'); kept as code - dog.compile accepts it
+                        lines.append(self.tag(f"{e.text}    // no-op statement (a source typo)"))
                     else:
                         lines.append(self.tag(e.text))
                     self._last_decl = None
@@ -347,8 +348,9 @@ class Decompiler:
                 nxt = self.ins[self.pos].name if self.pos < len(self.ins) else "EOF"
                 if function_end and v.text == "None" and nxt in ("FUNCLABEL", "EOF"):
                     continue  # implicit end of function
-                if v.text == "None" and nxt == "FUNCLABEL":
-                    lines.append("endfunction")   # inside a block left open by the source
+                if v.text == "None" and (nxt == "FUNCLABEL" or (self.nested_fn and nxt in BLOCK_END)):
+                    lines.append("endfunction")   # a function written inside a block (compiled inline)
+                    self.nested_fn = False
                     continue
                 # the PC compiler requires parentheses: 'return()' not 'return'
                 lines.append(self.tag("return()" if v.text == "None" else f"return ({v.text})"))
@@ -379,6 +381,7 @@ class Decompiler:
                     self.pos += 1
                 lines.append(self.tag(f"function {self.name(a[0])}( {', '.join(params)} )" if params
                                       else f"function {self.name(a[0])}( )"))
+                self.nested_fn = True
             else:
                 raise DecompileError(f"unhandled {n} at {i.off:#x}")
         return lines, "EOF", stack
