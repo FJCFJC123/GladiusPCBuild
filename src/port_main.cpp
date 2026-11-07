@@ -872,6 +872,7 @@ void port_devtools_init(const char *ini);       // devtools_host.cpp
 void port_reboot_init();                        // reboot.cpp
 void port_options_video_init();                 // options_video.cpp
 void port_menu_quit_init();                     // menu_quit.cpp
+void port_dog_fixes_init(const char *ini);      // dog_fixes.cpp
 void port_text_buffers_init();                  // text_buffers.cpp
 void port_preview_cache_init();                 // preview_cache.cpp
 void port_mods_init();                          // mods.cpp
@@ -1254,6 +1255,7 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     port_reboot_init();                                 // soft reboot -> seamless relaunch
     port_options_video_init();                          // Options screen: Video page
     port_menu_quit_init();                              // main menu: Quit Game
+    port_dog_fixes_init(ini);                           // script VM: int * gb.mTimeDelta at high frame rates
     port_text_buffers_init();                           // 16 KB format buffer, 64 KB frame text area
     port_mods_init();                                   // loose data\ files win over gladius.bec
     port_editor_init();                                 // gladius_editor.exe: the editor window

@@ -1037,6 +1037,8 @@ void d3d_present()
         overlay_draw();
     }
     screenshot_if_requested();
+    void port_dog_frame();                              // dog_fixes.cpp: the debug script-delta override
+    port_dog_frame();
     prof_frame_close_gpu();                             // before Present: its commands go out with this frame
     {
         ProfScope ps(PZ_PRESENT);
