@@ -57,16 +57,30 @@ void logf(const char *fmt, ...)
     _vsnprintf(line, sizeof line - 1, fmt, ap);
     va_end(ap);
     line[sizeof line - 1] = 0;
-    char p[MAX_PATH];
+    // release: replaced on every run, at most GNLOG_CAP bytes before it moves to gladiusnet.old.log (like port.log);
+    // developer builds append across runs
+    static const long GNLOG_CAP = PORT_RELEASE ? 4L << 20 : 0;
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static bool started;
+    static long bytes;
+    char p[MAX_PATH], old[MAX_PATH];
     path_in_dir(p, "gladiusnet.log");
-    FILE *f = fopen(p, "a");
+    path_in_dir(old, "gladiusnet.old.log");
+    AcquireSRWLockExclusive(&lock);
+    const char *mode = "a";
+    if (PORT_RELEASE && !started) { DeleteFileA(old); mode = "w"; }
+    else if (GNLOG_CAP && bytes >= GNLOG_CAP) { MoveFileExA(p, old, MOVEFILE_REPLACE_EXISTING); mode = "w"; bytes = 0; }
+    started = true;
+    FILE *f = fopen(p, mode);
     if (f) {
         SYSTEMTIME t;
         GetLocalTime(&t);
-        fprintf(f, "[%02d:%02d:%02d.%03d] %5u %s\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds,
-                GetCurrentProcessId(), line);
+        int n = fprintf(f, "[%02d:%02d:%02d.%03d] %5u %s\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds,
+                        GetCurrentProcessId(), line);
+        if (n > 0) bytes += n;
         fclose(f);
     }
+    ReleaseSRWLockExclusive(&lock);
     if (const GnNetApi *n = gn_net()) n->log_line(1, line);  // a client forwards diagnostics to the host
 }
 
@@ -75,8 +89,9 @@ void logf(const char *fmt, ...)
 static FILE *g_dtrace;
 static CRITICAL_SECTION g_dtraceCs;
 volatile uint32_t g_dtraceFrame;
-// repeated lines collapse into "(xN)", and the file stops growing at TRACE_MAX bytes
-static const long TRACE_MAX = 512L << 20;
+// repeated lines collapse into "(xN)", and the file stops growing at TRACE_MAX bytes (release: 16 MB, the start of a
+// session, where a desync is diffed from; developer builds 512 MB)
+static const long TRACE_MAX = PORT_RELEASE ? 16L << 20 : 512L << 20;
 static char g_dtraceLast[256];
 static uint32_t g_dtraceRepeat;
 static bool g_dtraceFull;

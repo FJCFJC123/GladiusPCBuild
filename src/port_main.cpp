@@ -16,7 +16,14 @@ bool port_devtools_crash(EXCEPTION_POINTERS *ep, const char *path, const char *w
 static FILE *g_log;
 const PortInfo *g_port_info;
 
-// port.log is this session; the previous one moves to logs\port_<end time>.log (newest 20 kept).
+// Release builds: port.log is replaced on every run (no archive) and holds at most LOG_CAP bytes; past that it moves
+// to port.old.log (replacing it) and a new port.log continues, so the newest lines (a crash at the end) are always
+// kept and the logs never take more than 2 x LOG_CAP. Developer builds keep every session in logs\ and no cap.
+static const long LOG_CAP = PORT_RELEASE ? 8L << 20 : 0;
+static char g_logPath[MAX_PATH], g_logOld[MAX_PATH];
+static long g_logBytes;
+
+// port.log is this session; the previous one moves to logs\port_<end time>.log (newest 20 kept; developer builds).
 static FILE *open_log()
 {
     char dir[MAX_PATH], path[MAX_PATH];
@@ -30,6 +37,12 @@ static FILE *open_log()
         if (atoi(pad + 7) > 0)
             _snprintf(base, sizeof base, "port_pad%d", atoi(pad + 7));
     _snprintf(path, MAX_PATH, "%s\\%s.log", dir, base);
+    _snprintf(g_logOld, MAX_PATH, "%s\\%s.old.log", dir, base);
+    lstrcpynA(g_logPath, path, MAX_PATH);
+    if (PORT_RELEASE) {                                 // a new run replaces the last one's logs
+        DeleteFileA(g_logOld);
+        return fopen(path, "w");
+    }
     WIN32_FILE_ATTRIBUTE_DATA a;
     if (GetFileAttributesExA(path, GetFileExInfoStandard, &a)) {
         char logs[MAX_PATH], old[MAX_PATH];
@@ -80,9 +93,17 @@ void port_log(const char *fmt, ...)
     AcquireSRWLockExclusive(&lock);
     if (!g_log)
         g_log = open_log();
+    if (g_log && LOG_CAP && g_logBytes >= LOG_CAP) {    // full: this part becomes port.old.log, a new port.log goes on
+        fclose(g_log);
+        MoveFileExA(g_logPath, g_logOld, MOVEFILE_REPLACE_EXISTING);
+        g_log = fopen(g_logPath, "w");
+        g_logBytes = 0;
+        if (g_log) g_logBytes += fprintf(g_log, "(log size limit: the earlier part of this run is in %s)\n", strrchr(g_logOld, 0x5C) + 1);
+    }
     if (g_log) {
         fputs(buf, g_log);
         fflush(g_log);
+        g_logBytes += (long)strlen(buf);
     }
     ReleaseSRWLockExclusive(&lock);
     if (port_log_hook)

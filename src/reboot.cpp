@@ -94,13 +94,17 @@ static DWORD __stdcall launch_new_image(const char *path, const BYTE *data)
     _snprintf(extra, sizeof extra, " -launchdata \"%s\" -handoff %s -winplace %d,%d,%d,%d,%d,%d", file.c_str(), ev_name,
               l, t, r, b, show, bl ? 1 : 0);
     std::string cmd = std::string("\"") + exe + "\"" + user_args() + extra;
-    {   // keep this run's log: the new process starts a fresh port.log
-        SYSTEMTIME st;
-        GetLocalTime(&st);
+    {   // keep this run's log: the new process starts a fresh port.log (release: one port.reboot.log, replaced)
         char dst[MAX_PATH];
-        _snprintf(dst, sizeof dst, "%slogs\\port_%04d%02d%02d_%02d%02d%02d_reboot.log", dir.c_str(), st.wYear, st.wMonth,
-                  st.wDay, st.wHour, st.wMinute, st.wSecond);
-        CreateDirectoryA((dir + "logs").c_str(), nullptr);
+        if (PORT_RELEASE) {
+            _snprintf(dst, sizeof dst, "%sport.reboot.log", dir.c_str());
+        } else {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            _snprintf(dst, sizeof dst, "%slogs\\port_%04d%02d%02d_%02d%02d%02d_reboot.log", dir.c_str(), st.wYear, st.wMonth,
+                      st.wDay, st.wHour, st.wMinute, st.wSecond);
+            CreateDirectoryA((dir + "logs").c_str(), nullptr);
+        }
         CopyFileA((dir + "port.log").c_str(), dst, FALSE);
     }
     char cwd[MAX_PATH];
