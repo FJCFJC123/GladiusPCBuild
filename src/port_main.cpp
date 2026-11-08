@@ -671,9 +671,13 @@ static void write_dump(const char *why, EXCEPTION_POINTERS *ep)
 
 void port_write_dump(const char *why) { write_dump(why, nullptr); }
 
+static void log_exception(EXCEPTION_POINTERS *ep, const char *what);
+
 // A fatal exception nobody handled: full dump, then default handling (WER).
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep)
 {
+    if (ep->ExceptionRecord->ExceptionCode < 0xC0000000)    // crash_handler logs only errors: breakpoints etc. here
+        log_exception(ep, "UNHANDLED");
     write_dump("crash", ep);
     if (PORT_RELEASE) TerminateProcess(GetCurrentProcess(), ep->ExceptionRecord->ExceptionCode);   // no WER dump
     return EXCEPTION_CONTINUE_SEARCH;
@@ -756,15 +760,23 @@ static LONG CALLBACK crash_handler(EXCEPTION_POINTERS *ep)
     }
     if (code < 0xC0000000)                              // informational: let SEH handle it
         return EXCEPTION_CONTINUE_SEARCH;
+    log_exception(ep, "EXCEPTION");
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Code, address, registers and return addresses of an exception.
+static void log_exception(EXCEPTION_POINTERS *ep, const char *what)
+{
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
     CONTEXT *c = ep->ContextRecord;
     char mod[MAX_PATH + 32];
     {                                                   // CRT per-thread data path: index var -> TLS array -> block
         DWORD idx = *(DWORD *)0x418B8C, *tls = (DWORD *)__readfsdword(0x2C);
         port_log("TLS: index %u, array %p [%08X %08X %08X %08X], slot %08X (startup: index %u block %08X)\n", idx,
                  tls, tls ? tls[0] : 0, tls ? tls[1] : 0, tls ? tls[2] : 0, tls ? tls[3] : 0,
-                 tls && idx < 64 ? *(DWORD *)(tls[idx] + 0xC) : 0, g_tls_index0, g_tls_block0);
+                 tls && idx < 64 && tls[idx] ? *(DWORD *)(tls[idx] + 0xC) : 0, g_tls_index0, g_tls_block0);
     }
-    port_log("EXCEPTION %08X at 0x%08X%s (thread %u)", code, c->Eip, module_of(c->Eip, mod, sizeof mod),
+    port_log("%s %08X at 0x%08X%s (thread %u)", what, code, c->Eip, module_of(c->Eip, mod, sizeof mod),
              GetCurrentThreadId());
     if (code == EXCEPTION_ACCESS_VIOLATION)
         port_log(" (%s 0x%08X)", ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read",
@@ -794,7 +806,6 @@ static LONG CALLBACK crash_handler(EXCEPTION_POINTERS *ep)
         }
     }
     port_log("\n");
-    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 // abort() fast-fails without running exception handlers: log the callers and write the dump here.

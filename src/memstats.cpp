@@ -1,5 +1,5 @@
 // [debug] MemStats=1: game allocations per kind (heap, private heap, physical, virtual) and thread role, logged every
-// 60 s. [debug] HeapCheck=1: refuse and log stale frees in the engine's tracked heap.
+// 60 s. HeapCheck (on by default, [debug] HeapCheck=0 = off): refuse and log stale frees in the engine's tracked heap.
 #include "port.h"
 #include "memstats.h"
 #include <intrin.h>
@@ -25,9 +25,9 @@ static const char *const ROLE_NAMES[MS_ROLES] = {"other", "main", "cri", "io"};
 // Read the [debug] MemStats / HeapCheck switches.
 void memstats_init(const char *ini)
 {
-    g_hc_on = GetPrivateProfileIntA("debug", "HeapCheck", 0, ini) != 0;
-    if (g_hc_on)
-        port_log("debug: HeapCheck on (stale frees of game heap blocks are logged and refused)\n");
+    // on by default: the engine frees some blocks twice when a battle ends, which corrupts the heap without it
+    g_hc_on = GetPrivateProfileIntA("debug", "HeapCheck", 1, ini) != 0;
+    port_log("heapcheck: %s\n", g_hc_on ? "on (stale frees of game heap blocks are logged and refused)" : "OFF ([debug] HeapCheck=0)");
     g_on = GetPrivateProfileIntA("debug", "MemStats", 0, ini) != 0;
     if (!g_on)
         return;
