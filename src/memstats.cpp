@@ -145,6 +145,9 @@ extern volatile DWORD g_port_probe_tid;                   // port_main.cpp: thre
 
 bool heapcheck_enabled() { return g_hc_on; }
 
+// pkgdiag.cpp: told of every free that goes ahead (its own hook can't share 0x176A30 with this one)
+void(__cdecl *port_heap_free_notify)(uint32_t p);
+
 // Game return addresses on the current stack (in .text and preceded by a call).
 void memstats_game_stack(uint32_t *out, int n, const void *from)
 {
@@ -232,8 +235,10 @@ static int __cdecl tracked_free_ok(const uint8_t *user, const void *sp)
             prev = it->second, stale = true;
     }
     ReleaseSRWLockShared(&g_hc_lock);
-    if (live)
+    if (live) {
+        if (port_heap_free_notify) port_heap_free_notify((uint32_t)user);
         return 1;
+    }
     uint32_t now[10];
     memstats_game_stack(now, 10, sp);
     char a[128], b[128];
@@ -241,6 +246,7 @@ static int __cdecl tracked_free_ok(const uint8_t *user, const void *sp)
     if (!stale) {
         if (g_hc_unknown++ < 20)
             port_log("heapcheck: tracked free of unknown block %p (header %08X) <-%s\n", user, (unsigned)hdr, a);
+        if (port_heap_free_notify) port_heap_free_notify((uint32_t)user);
         return 1;                                       // not ours to judge: let it through
     }
     memstats_fmt_stack(b, sizeof b, prev.stack, 10);

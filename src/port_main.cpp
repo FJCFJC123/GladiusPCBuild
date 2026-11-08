@@ -228,6 +228,7 @@ static void __cdecl port_request_state(int id)
 // [debug] WatchTls=1: hardware write watch on the game thread's CRT per-thread-data slot
 static volatile DWORD g_tls_watch_req;
 static DWORD g_tls_index0, g_tls_block0;
+static DWORD g_game_tid;                                // the main game thread
 
 // The game's static TLS block (CRT per-thread data, 0x90 bytes) must really be that big. Exes converted with an empty
 // TLS template got a 0-byte block, so for those every game thread gets a full-size block of ours; the loader's own
@@ -305,6 +306,7 @@ const char *port_ini_name()
 static DWORD WINAPI game_thread(LPVOID param)
 {
     port_fix_game_tls();                                // before any game code runs on this thread
+    g_game_tid = GetCurrentThreadId();
     memstats_set_role(MS_MAIN);
     port_set_vtid(0x1000);                              // virtual thread id of the main game thread
     const PortInfo *info = (const PortInfo *)param;
@@ -673,6 +675,36 @@ void port_write_dump(const char *why) { write_dump(why, nullptr); }
 
 static void log_exception(EXCEPTION_POINTERS *ep, const char *what);
 
+#ifdef PORT_CRASHTEST
+// Local test builds only (set CL=/DPORT_CRASHTEST): GP_CRASHTEST=av|int3|abort crashes the game thread mid-frame,
+// =thread crashes a thread of ours, after GP_CRASHDELAY seconds (default 25) - checks what a crash leaves in port.log.
+static void crashtest_av() { *(volatile int *)0 = 1; }
+static void crashtest_int3() { __debugbreak(); }
+static void crashtest_abort() { abort(); }
+static DWORD WINAPI crashtest_thread(LPVOID)
+{
+    char mode[16] = "", delay[16] = "";
+    GetEnvironmentVariableA("GP_CRASHTEST", mode, sizeof mode);
+    GetEnvironmentVariableA("GP_CRASHDELAY", delay, sizeof delay);
+    if (!mode[0]) return 0;
+    Sleep((delay[0] ? atoi(delay) : 25) * 1000);
+    port_log("crashtest: %s\n", mode);
+    if (!strcmp(mode, "thread")) crashtest_av();
+    void (*fn)() = !strcmp(mode, "int3") ? crashtest_int3 : !strcmp(mode, "abort") ? crashtest_abort : crashtest_av;
+    HANDLE t = OpenThread(THREAD_ALL_ACCESS, FALSE, g_game_tid);
+    if (!t || SuspendThread(t) == (DWORD)-1) return 1;
+    CONTEXT c = {};
+    c.ContextFlags = CONTEXT_CONTROL;
+    GetThreadContext(t, &c);
+    c.Esp -= 4;                                         // a return address, as if fn was called from there
+    *(DWORD *)c.Esp = c.Eip;
+    c.Eip = (DWORD)fn;
+    SetThreadContext(t, &c);
+    ResumeThread(t);
+    return 0;
+}
+#endif
+
 // A fatal exception nobody handled: full dump, then default handling (WER).
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep)
 {
@@ -726,6 +758,16 @@ static LONG CALLBACK crash_handler(EXCEPTION_POINTERS *ep)
             port_log("memwatch: WRITE %08X = %08X at EIP %08X%s (thread %u) stack%s\n", a, *(DWORD *)a,
                      ep->ContextRecord->Eip, module_of(ep->ContextRecord->Eip, mod, sizeof mod), GetCurrentThreadId(), st);
         }
+        ep->ContextRecord->Dr6 = 0;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (code == EXCEPTION_SINGLE_STEP && (g_mw_gen || g_watch_addr)) {
+        // a watch trap without its DR6 bit: Wine/Proton may not report DR6, or the watch was just moved / released
+        // and this thread still had the old one armed. Ours either way - never let it end the process.
+        static volatile LONG odd;
+        if (InterlockedIncrement(&odd) <= 5)
+            port_log("memwatch: debug trap at EIP %08X without a known watch (DR6 %08X) - ignored\n",
+                     ep->ContextRecord->Eip, (unsigned)ep->ContextRecord->Dr6);
         ep->ContextRecord->Dr6 = 0;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
@@ -1056,6 +1098,9 @@ extern "C" __declspec(dllexport) void __stdcall port_start(const PortInfo *info)
     signal(SIGABRT, on_abort);                          // abort() ends in a fast-fail no handler sees: log it first
     _set_purecall_handler(on_purecall);
     SetUnhandledExceptionFilter(unhandled_filter);
+#ifdef PORT_CRASHTEST
+    CloseHandle(CreateThread(nullptr, 0, crashtest_thread, nullptr, 0, nullptr));
+#endif
     if (PORT_RELEASE) {                                 // no WER report / dump on the CRT's own fatal paths either
         _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
         _set_invalid_parameter_handler(on_invalid_parameter);

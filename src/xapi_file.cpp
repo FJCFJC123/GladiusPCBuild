@@ -141,7 +141,7 @@ void port_forget_file_handle(HANDLE h)
 void dtrace(const char *fmt, ...);                      // gn_core.cpp: netplay session trace (no-op outside)
 
 // memory diagnostics (pkgdiag.cpp): told right before a ReadFileEx writes into its buffer
-void (*port_readex_notify)(void *dest, DWORD n);
+void (*port_readex_notify)(void *dest, DWORD n, void *ov);
 
 struct QueuedCompletion {
     LPOVERLAPPED_COMPLETION_ROUTINE cb;
@@ -488,7 +488,7 @@ BOOL __stdcall xapi_ReadFileEx(HANDLE h, void *buf, DWORD n, OVERLAPPED *ov, LPO
     ReadTimer rt(n, ov);
     HANDLE vh = h;
     h = vh_real(h);
-    if (port_readex_notify) port_readex_notify(buf, n);   // pkgdiag.cpp: read into a freed block?
+    if (port_readex_notify) port_readex_notify(buf, n, ov);   // pkgdiag.cpp: read into a freed block?
     BOOL ok = sync_transfer_with_apc(false, h, buf, n, ov, trace_io("ReadFileEx", h, n, ov, cb));
     dtrace("  readex %p -> %p %u @%08X ok %d err %u", vh, h, n, ov ? ov->Offset : 0, ok, ok ? 0 : GetLastError());
     if (!ok)

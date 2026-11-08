@@ -197,14 +197,23 @@ static void stack_callers(char *out, int n)
     out[o < n ? o : n - 1] = 0;
 }
 
-namespace pkgdiag { void read_queued(uint32_t buf, uint32_t size, const char *stack); }
+namespace pkgdiag { void read_queued(uint32_t req, uint32_t buf, uint32_t size, const char *stack); }
+
+// Before the request is queued: the stream thread may run it before the enqueue returns.
+static void __cdecl before_enqueue(const uint8_t *cmd)
+{
+    if (!cmd) return;
+    char st[260];
+    stack_callers(st, sizeof st);
+    // request: +0x10 dest, +0x14 size, +0x20 the OVERLAPPED the reader passes to ReadFileEx (0x1FD590)
+    pkgdiag::read_queued(*(const uint32_t *)(cmd + 0x20), *(const uint32_t *)(cmd + 0x10), *(const uint32_t *)(cmd + 0x14), st);
+}
 
 static void __cdecl after_enqueue(uint32_t caller, int front, const uint8_t *cmd)
 {
+    if (!g_det) return;
     char st[260];
     stack_callers(st, sizeof st);
-    if (cmd) pkgdiag::read_queued(*(const uint32_t *)(cmd + 0x10), *(const uint32_t *)(cmd + 0x14), st);
-    if (!g_det) return;
     dtrace("  read-issued%s from %06X tid %u <-%s", front ? " (front)" : "", caller, GetCurrentThreadId(), st);
     const uint8_t *m = (const uint8_t *)0x4FCA00;
     dtrace("  queue after enqueue: inflight %u running %u head %08X cs lock %d owner %u", m[0], m[0xC],
@@ -237,6 +246,11 @@ static __declspec(naked) void enqueue_original()
 static __declspec(naked) void enqueue_hook()
 {
     __asm {
+        push ecx
+        push dword ptr [esp + 8]        // the request
+        call before_enqueue
+        add esp, 4
+        pop ecx
         push dword ptr [esp + 4]
         call enqueue_original           // ecx = manager, pops the argument
         push eax
@@ -265,6 +279,11 @@ static __declspec(naked) void enqueue_front_original()
 static __declspec(naked) void enqueue_front_hook()
 {
     __asm {
+        push ecx
+        push dword ptr [esp + 8]        // the request
+        call before_enqueue
+        add esp, 4
+        pop ecx
         push dword ptr [esp + 4]
         call enqueue_front_original
         push eax

@@ -6,7 +6,9 @@
 #include <intrin.h>
 
 void port_log(const char *fmt, ...);
-extern void (*port_readex_notify)(void *dest, DWORD n);   // xapi_file.cpp
+extern void (*port_readex_notify)(void *dest, DWORD n, void *ov);   // xapi_file.cpp
+bool heapcheck_enabled();                                 // memstats.cpp
+extern void(__cdecl *port_heap_free_notify)(uint32_t p);
 void port_memwatch_set(int slot, uint32_t addr);          // port_main.cpp: DR2/DR3 write watches
 uint32_t port_memwatch_get(int slot);
 void port_write_dump(const char *why);                    // port_main.cpp: full-memory minidump, once per reason
@@ -97,6 +99,9 @@ static int g_seenNext;
 
 static void note_shared(uint32_t hdr, uint32_t model)
 {
+#if defined(PORT_RELEASE) && PORT_RELEASE
+    return;                                             // debug registers stay untouched in release (Wine/Proton died on them)
+#endif
     uint32_t w = hdr + 0x1C;
     if (port_memwatch_get(0) == w || port_memwatch_get(1) == w) return;
     int slot = !port_memwatch_get(0) ? 0 : !port_memwatch_get(1) ? 1 : -1;
@@ -186,21 +191,31 @@ static int __cdecl draw_ok(const uint8_t *model, uint32_t flags)
 
 // Frees while a stream read into the block is still queued: the late ReadFile would write into memory that now
 // belongs to someone else (invisible to write watches, since the OS writes it).
-struct PendingRead { uint32_t buf, size, freedBlock, freedSize; DWORD queuedAt; bool freed; char stack[200]; };
+// Recorded before the request reaches the stream thread (which may run it at once) and matched by its OVERLAPPED and
+// destination, since buffers are reused. A read pending for over a minute is dropped (a skipped request).
+struct PendingRead { uint32_t ov, buf, size, freedBlock, freedSize; DWORD queuedAt; bool freed; char stack[200]; };
 static PendingRead g_reads[64];
 static volatile LONG g_nreads;
 static int g_rwLogged;
 
-void read_queued(uint32_t buf, uint32_t size, const char *stack)
+void read_queued(uint32_t ov, uint32_t buf, uint32_t size, const char *stack)
 {
-    if (!buf || !size) return;
+    if (!ov || !buf || !size) return;
     EnterCriticalSection(&g_cs);
     int slot = -1;
-    for (int i = 0; i < 64 && slot < 0; i++) if (!g_reads[i].buf) slot = i;
+    DWORD now = GetTickCount();
+    for (int i = 0; i < 64; i++) {
+        PendingRead &r = g_reads[i];
+        if (r.buf && ((r.ov == ov && r.buf == buf) || now - r.queuedAt > 60000)) {   // same read again / never ran
+            r.buf = 0;
+            InterlockedDecrement(&g_nreads);
+        }
+        if (!r.buf && slot < 0) slot = i;
+    }
     if (slot >= 0) {
         PendingRead &r = g_reads[slot];
-        r.buf = buf; r.size = size; r.freed = false; r.freedBlock = r.freedSize = 0;
-        r.queuedAt = GetTickCount();
+        r.ov = ov; r.buf = buf; r.size = size; r.freed = false; r.freedBlock = r.freedSize = 0;
+        r.queuedAt = now;
         strncpy(r.stack, stack, sizeof r.stack - 1);
         r.stack[sizeof r.stack - 1] = 0;
         InterlockedIncrement(&g_nreads);
@@ -208,13 +223,17 @@ void read_queued(uint32_t buf, uint32_t size, const char *stack)
     LeaveCriticalSection(&g_cs);
 }
 
-static void __cdecl read_executing(void *dest, DWORD n)          // xapi_ReadFileEx (port_readex_notify)
+static void __cdecl read_executing(void *dest, DWORD n, void *ov)   // xapi_ReadFileEx (port_readex_notify)
 {
     if (!g_nreads) return;
     EnterCriticalSection(&g_cs);
     for (int i = 0; i < 64; i++) {
         PendingRead &r = g_reads[i];
-        if (!r.buf || r.buf != (uint32_t)dest) continue;
+        if (!r.buf || r.ov != (uint32_t)ov || r.buf != (uint32_t)dest) continue;
+#ifdef PORT_CRASHTEST
+        static int matched;
+        if (++matched % 200 == 1) port_log("memdiag test: %d queued reads matched at ReadFileEx\n", matched);
+#endif
         if (r.freed && g_rwLogged < 40) {
             g_rwLogged++;
             port_log("memdiag: READ INTO FREED MEMORY: %u bytes -> %08X (block %08X+%X freed after the read was "
@@ -363,7 +382,8 @@ void install()
     InitializeCriticalSection(&g_cs);
     patch(0x1EF3E0, "558bec83e4f0", draw_hook);
     patch(0x1E6410, "6aff68fb8d2900", destroy_hook);
-    patch(0x176A30, "8b44240485c0", heap_free_hook);
+    if (heapcheck_enabled()) port_heap_free_notify = on_heap_free;   // memstats.cpp owns 0x176A30 then
+    else patch(0x176A30, "8b44240485c0", heap_free_hook);
     if (port_smallheap_installed) port_pool_free_notify = on_pool_free;
     else patch(0x176360, "8b54240453", pool_free_hook);
     port_readex_notify = read_executing;
